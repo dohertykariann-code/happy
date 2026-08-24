@@ -87,7 +87,6 @@ export const en = {
         offline: 'offline',
         lastSeen: ({ time }: { time: string }) => `last seen ${time}`,
         permissionRequired: 'permission required',
-        inputRequired: 'waiting for your answer',
         activeNow: 'Active now',
         unknown: 'unknown',
         unread: 'new results',
@@ -214,6 +213,35 @@ export const en = {
         flatList: 'Flat List',
         groupByProject: 'Group by Project',
         appearanceSettings: 'Appearance Settings',
+        display: 'Display',
+        displayDescription: 'Control layout and spacing',
+        inlineToolCalls: 'Inline Tool Calls',
+        inlineToolCallsDescription: 'Display tool calls directly in chat messages',
+        expandTodoLists: 'Expand Todo Lists',
+        expandTodoListsDescription: 'Show all todos instead of just changes',
+        showLineNumbersInDiffs: 'Show Line Numbers in Diffs',
+        showLineNumbersInDiffsDescription: 'Display line numbers in code diffs',
+        showLineNumbersInToolViews: 'Show Line Numbers in Tool Views',
+        showLineNumbersInToolViewsDescription: 'Display line numbers in tool view diffs',
+        wrapLinesInDiffs: 'Wrap Lines in Diffs',
+        wrapLinesInDiffsDescription: 'Wrap long lines instead of horizontal scrolling in diff views',
+        diffStyle: 'Diff View',
+        diffStyleDescription: 'Show diffs as a single column (unified) or side-by-side (split). Split view is web-only.',
+        diffStyleOptions: {
+            unified: 'Unified',
+            split: 'Split',
+        },
+        alwaysShowContextSize: 'Always Show Context Size',
+        alwaysShowContextSizeDescription: 'Display context usage even when not near limit',
+        avatarStyle: 'Avatar Style',
+        avatarStyleDescription: 'Choose session avatar appearance',
+        avatarOptions: {
+            pixelated: 'Pixelated',
+            gradient: 'Gradient',
+            brutalist: 'Brutalist',
+        },
+        showFlavorIcons: 'Show AI Provider Icons',
+        showFlavorIconsDescription: 'Display AI provider icons on session avatars',
     },
 
     settingsFeatures: {
@@ -235,6 +263,13 @@ export const en = {
         markdownCopyV2Subtitle: 'Long press opens copy modal',
         groupToolCalls: 'Group Tool Calls',
         groupToolCallsSubtitle: 'Collapse consecutive tool calls into one container',
+        privacy: 'Privacy',
+        privacyDescription: 'Completely disables all analytics and telemetry. No data will be sent to PostHog or any other tracking service.',
+        disableAnalytics: 'Disable Analytics',
+        analyticsDisabled: 'All tracking and telemetry disabled',
+        analyticsEnabled: 'Anonymous usage analytics active',
+        imageUpload: 'Image Upload',
+        imageUploadSubtitle: 'Attach images to messages for Claude to analyze',
     },
 
     imageUpload: {
@@ -249,7 +284,12 @@ export const en = {
             ? 'One image could not be uploaded and was not sent.'
             : `${count} images could not be uploaded and were not sent.`,
         notSupportedTitle: 'Images Not Supported',
-        notSupportedMessage: 'This agent does not support image attachments. Images were not sent.',
+        notSupportedMessage: 'This agent does not support image attachments. Only the text was sent.',
+        sourceTitle: 'Add Photo',
+        sourceLibrary: 'Photo Library',
+        sourceCamera: 'Take Photo',
+        cameraPermissionTitle: 'Camera Access',
+        cameraPermissionMessage: 'Allow access to your camera to take photos for messages.',
     },
 
     errors: {
@@ -323,8 +363,6 @@ export const en = {
         inactiveArchived: 'This session is inactive.',
         resumeFromTerminal: 'To resume it from the terminal:',
         newChat: 'New chat',
-        statusBarContext: 'Context',
-        statusBarPathTitle: 'Working directory',
         // Fork / duplicate / rewind flow (Claude only)
         forkAction: 'Fork session',
         forkSubtitle: 'Continue in a new session with the same context',
@@ -461,21 +499,12 @@ export const en = {
 
     agentInput: {
         permissionMode: {
-            // Modes are named with one untranslated word so they fit the
-            // composer chip; these strings describe them under that name.
             title: 'PERMISSION MODE',
-            // Not "never asks": auto still stops for a human, it just decides
-            // for itself when that is warranted.
-            auto: 'asks when unsure',
-            // Default sends no mode at all, so naming a behaviour here would be
-            // a guess about someone else's config.
-            default: 'harness setting',
-            agyDefault: 'agy sandbox',
-            openclawInert: 'not applied',
-            acceptEdits: 'edits, no asking',
-            plan: 'plan first',
+            default: 'default permissions',
+            acceptEdits: 'accept edits',
+            plan: 'plan',
             dontAsk: "don't ask",
-            bypassPermissions: 'never asks',
+            bypassPermissions: 'yolo',
             badgeAcceptAllEdits: 'accept all edits',
             badgeBypassAllPermissions: 'yolo',
             badgePlanMode: 'plan mode',
@@ -499,15 +528,6 @@ export const en = {
             readOnly: 'read-only',
             safeYolo: 'safe yolo',
             yolo: 'yolo',
-            defaultDescription: 'codex setting',
-            // Codex's own Auto preset: on-request approvals inside the
-            // workspace sandbox.
-            autoDescription: 'asks when unsure',
-            readOnlyDescription: 'no writes',
-            // Not "no prompts": shouldAutoApproveCodexApproval deliberately
-            // skips safe-yolo, so a sandbox escalation still reaches you.
-            safeYoloDescription: 'sandboxed, can escalate',
-            yoloDescription: 'full access',
             badgeReadOnly: 'read-only',
             badgeSafeYolo: 'safe yolo',
             badgeYolo: 'yolo',
@@ -524,10 +544,10 @@ export const en = {
         },
         geminiPermissionMode: {
             title: 'GEMINI PERMISSION MODE',
-            default: 'ask before every tool',
-            autoEdit: 'accept file edits',
-            yolo: 'never ask, full access',
-            plan: 'read only, plan first',
+            default: 'default permissions',
+            autoEdit: 'auto edit',
+            yolo: 'yolo',
+            plan: 'plan',
             badgeAutoEdit: 'auto edit',
             badgeYolo: 'yolo',
             badgePlan: 'plan',
@@ -556,27 +576,11 @@ export const en = {
         offlineUnableToSpawn: 'Unable to spawn new session, offline',
     },
 
-    agentQuestion: {
-        title: 'Question',
-        submit: 'Send answer',
-        chooseMultiple: 'Choose as many as apply',
-        ownAnswer: 'Your own answer',
-        ownAnswerPlaceholder: 'Write an answer instead',
-        submitFailed: 'Could not send your answer',
-        dismiss: 'Dismiss',
-        unsupportedTitle: 'Unsupported request',
-        unsupportedDescription: ({ kind }: { kind: string }) =>
-            `This version of Happy cannot show a "${kind}" request. Update the app to respond.`,
-        moreQuestions: ({ count }: { count: number }) =>
-            count === 1 ? '1 more question' : `${count} more questions`,
-    },
-
     sidebar: {
         sessionsTitle: 'Happy',
         showArchived: 'Show archived',
         hideArchived: 'Hide archived',
         newSession: 'New session',
-        projects: 'Projects',
     },
 
     zen: {
@@ -695,8 +699,6 @@ export const en = {
         deleted: 'Deleted',
         changedFiles: ({ count }: { count: number }) => `${count} changed ${count === 1 ? 'file' : 'files'}`,
         allFiles: 'All Files',
-        addPanel: 'Add panel',
-        closePanel: 'Close panel',
         editFile: 'Edit',
         saveFile: 'Save',
         failedToRead: 'Failed to read file',
@@ -796,6 +798,48 @@ export const en = {
         logout: 'Logout',
         logoutSubtitle: 'Sign out and clear local data',
         logoutConfirm: 'Are you sure you want to logout? Make sure you have backed up your secret key!',
+        // Push notifications
+        pushTitle: 'Push Notifications',
+        pushFooter: 'Get notified on this device when a session needs your input — a question, a permission request, or a finished task. The list below shows which devices are set up to receive these.',
+        pushPermission: 'Permission',
+        pushPermLabelUnavailable: 'Unavailable',
+        pushPermLabelAllowed: 'Allowed',
+        pushPermLabelDenied: 'Denied',
+        pushPermLabelNotRequested: 'Not requested',
+        pushPermChecking: 'Checking notification permissions for this device.',
+        pushPermUnsupported: 'Open Happy on your iPhone (added to your Home Screen) to turn on notifications.',
+        pushPermGranted: 'This device can receive notifications.',
+        pushPermCanAsk: 'The system prompt can still be shown again from the app.',
+        pushPermBlocked: 'iOS has stopped prompting. Open system Settings to enable notifications again.',
+        pushEnableTurnOn: 'Turn On Notifications',
+        pushEnableOpenSettings: 'Open Notification Settings',
+        pushEnableUnavailableTitle: 'Notifications Unavailable',
+        pushEnableSubUnsupported: 'Notifications are only available on iPhone and Android.',
+        pushEnableSubCanAsk: 'Shows the system prompt again if iOS still allows it.',
+        pushEnableSubBlocked: 'Opens system Settings when iOS will not prompt again.',
+        pushRefreshTitle: 'Refresh This Device',
+        pushRefreshSubDefault: 'Not getting notifications? Tap to reconnect this device.',
+        pushRefreshSubCurrent: ({ token }: { token: string }) => `Connected · ${token}`,
+        pushEnabledSuccess: 'Notifications are enabled for this device.',
+        pushNotGranted: 'Notification permission was not granted.',
+        pushOpenSettingsTitle: 'Open Settings',
+        pushOpenSettingsBody: 'iOS will not show the prompt again, so Happy opened Settings instead.',
+        pushRefreshedSuccess: 'This device was reconnected.',
+        pushNotEnabledYet: 'Notifications are not enabled for this device yet.',
+        pushRequestFailed: 'Failed to request notification permission.',
+        pushRefreshFailed: 'Failed to reconnect this device.',
+        pushLoadFailed: 'Failed to load notification settings.',
+        pushDevicesTitle: ({ count }: { count: number }) => `Registered Devices (${count})`,
+        pushDevicesFooter: 'Devices set up to receive notifications. Tap another device to remove it.',
+        pushDevicesEmpty: 'No devices registered',
+        pushDevicesEmptySub: 'Once this device is registered, it will appear here.',
+        pushDeviceReceiving: 'Receiving notifications',
+        pushDeviceOther: 'Another device — tap to remove',
+        pushDeviceRegistered: ({ date }: { date: string }) => `Registered ${date}`,
+        pushDeviceLastSeen: ({ date }: { date: string }) => `Last seen ${date}`,
+        pushDeleteTitle: 'Remove Device',
+        pushDeleteBody: ({ name }: { name: string }) => `Remove ${name} from your account? It will stop receiving notifications.`,
+        pushDeleteFailed: 'Failed to remove device.',
     },
 
     settingsLanguage: {
@@ -854,6 +898,9 @@ export const en = {
         clientSideProcessing: 'Client-Side Processing',
         linkProcessedLocally: 'Link processed locally in browser',
         linkProcessedOnDevice: 'Link processed locally on device',
+        // FORK (Task 3.2): autoCreate pairing deep-link
+        settingUpAccount: 'Setting up your account…',
+        autoCreateFailed: "Couldn't reach your Mac to set up an account. Make sure it's awake and on the same Wi-Fi, then rescan the QR code.",
     },
 
     modals: {
@@ -951,7 +998,6 @@ export const en = {
         switchedToMode: ({ mode }: { mode: string }) => `Switched to ${mode} mode`,
         unknownEvent: 'Unknown event',
         usageLimitUntil: ({ time }: { time: string }) => `Usage limit reached until ${time}`,
-        sentAsGoal: 'Sent as goal',
         unknownTime: 'unknown time',
     },
 
