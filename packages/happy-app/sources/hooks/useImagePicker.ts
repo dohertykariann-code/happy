@@ -4,16 +4,14 @@
  * Wraps expo-image-picker with permission handling and thumbhash generation.
  * Enforces limits: max 20 images per message, 10MB per file.
  *
- * On iOS/Android, tapping the picker button shows an action sheet to choose
- * between the photo library and the camera. On web it opens the file picker
- * directly.
- *
- * Note: fileSize from expo-image-picker is optional -- some platforms do not
- * provide it (returns undefined -> size=0). Such files pass the client-side
- * size check; the server enforces the limit on upload.
+ * Note: fileSize from expo-image-picker is optional — some platforms do not
+ * provide it (returns undefined → size=0). Such files pass the client-side
+ * size check; the server enforces the limit on upload. Phase 5 should handle
+ * 413 responses gracefully.
  */
 import { useState, useCallback, useRef, useEffect } from 'react';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { Platform } from 'react-native';
 import { Modal } from '@/modal';
 import { generateThumbhash } from '@/utils/thumbhash';
@@ -22,6 +20,7 @@ import type { AttachmentPreview } from '@/sync/attachmentTypes';
 
 export const MAX_IMAGES_PER_MESSAGE = 20;
 export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const IOS_ATTACHMENT_JPEG_QUALITY = 0.92;
 
 export type { AttachmentPreview };
 
@@ -38,8 +37,48 @@ type UseImagePickerResult = {
     addImages: (images: AttachmentPreview[]) => void;
 };
 
+function withJpegExtension(fileName: string | null | undefined): string {
+    const fallback = `image_${Date.now()}.jpg`;
+    const name = fileName?.trim() || fallback;
+    const extensionIndex = name.lastIndexOf('.');
+    const stem = extensionIndex > 0 ? name.slice(0, extensionIndex) : name;
+    return `${stem}.jpg`;
+}
+
+export async function normalizePickedAssetForUpload(asset: ImagePicker.ImagePickerAsset): Promise<{
+    uri: string;
+    width: number;
+    height: number;
+    mimeType: string;
+    name: string;
+}> {
+    if (Platform.OS !== 'ios') {
+        return {
+            uri: asset.uri,
+            width: asset.width,
+            height: asset.height,
+            mimeType: asset.mimeType ?? 'image/jpeg',
+            name: asset.fileName ?? `image_${Date.now()}.jpg`,
+        };
+    }
+
+    const converted = await manipulateAsync(asset.uri, [], {
+        compress: IOS_ATTACHMENT_JPEG_QUALITY,
+        format: SaveFormat.JPEG,
+    });
+
+    return {
+        uri: converted.uri,
+        width: converted.width || asset.width,
+        height: converted.height || asset.height,
+        mimeType: 'image/jpeg',
+        name: withJpegExtension(asset.fileName),
+    };
+}
+
 export function useImagePicker(): UseImagePickerResult {
     const [selectedImages, setSelectedImages] = useState<AttachmentPreview[]>([]);
+    // Ref tracks current count to avoid stale closures on rapid taps.
     const selectedCountRef = useRef(0);
     useEffect(() => {
         selectedCountRef.current = selectedImages.length;
@@ -47,6 +86,7 @@ export function useImagePicker(): UseImagePickerResult {
 
     const requestLibraryPermission = useCallback(async (): Promise<boolean> => {
         if (Platform.OS === 'web') return true;
+
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!isPermissionAccepted(status)) {
             Modal.alert(
@@ -76,8 +116,10 @@ export function useImagePicker(): UseImagePickerResult {
         assets: ImagePicker.ImagePickerAsset[],
     ): Promise<AttachmentPreview[]> => {
         const previews: AttachmentPreview[] = [];
+
         for (const asset of assets) {
             const size = asset.fileSize ?? 0;
+
             if (size > MAX_FILE_SIZE) {
                 Modal.alert(
                     t('imageUpload.fileTooLargeTitle'),
@@ -86,20 +128,26 @@ export function useImagePicker(): UseImagePickerResult {
                 );
                 continue;
             }
-            const thumbhash = (asset.width > 0 && asset.height > 0)
-                ? await generateThumbhash(asset.uri, asset.width, asset.height)
+
+            const normalized = await normalizePickedAssetForUpload(asset);
+
+            // Skip thumbhash if dimensions are unavailable (prevents divide-by-zero).
+            const thumbhash = (normalized.width > 0 && normalized.height > 0)
+                ? await generateThumbhash(normalized.uri, normalized.width, normalized.height)
                 : undefined;
+
             previews.push({
                 id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
-                uri: asset.uri,
-                width: asset.width,
-                height: asset.height,
-                mimeType: asset.mimeType ?? 'image/jpeg',
+                uri: normalized.uri,
+                width: normalized.width,
+                height: normalized.height,
+                mimeType: normalized.mimeType,
                 size,
-                name: asset.fileName ?? `image_${Date.now()}.jpg`,
+                name: normalized.name,
                 thumbhash,
             });
         }
+
         return previews;
     }, []);
 
@@ -118,21 +166,22 @@ export function useImagePicker(): UseImagePickerResult {
         }
 
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
+            mediaTypes: ['images'], // expo-image-picker ~55: MediaTypeOptions deprecated
             allowsMultipleSelection: true,
             selectionLimit: remaining,
-            quality: 1,
+            quality: 1, // request full-resolution source; iOS upload is normalized below
             exif: false,
         });
 
         if (result.canceled || !result.assets.length) return;
 
-        // On web, selectionLimit is not enforced by the browser -- clamp here.
+        // On web, selectionLimit is not enforced by the browser — clamp here.
         const previews = await processAssets(result.assets.slice(0, remaining));
+
         if (previews.length > 0) {
             setSelectedImages(prev => [...prev, ...previews].slice(0, MAX_IMAGES_PER_MESSAGE));
         }
-    }, [requestLibraryPermission, processAssets]);
+    }, [processAssets, requestLibraryPermission]);
 
     const openCamera = useCallback(async () => {
         const hasPermission = await requestCameraPermission();
@@ -159,14 +208,14 @@ export function useImagePicker(): UseImagePickerResult {
         if (previews.length > 0) {
             setSelectedImages(prev => [...prev, ...previews].slice(0, MAX_IMAGES_PER_MESSAGE));
         }
-    }, [requestCameraPermission, processAssets]);
+    }, [processAssets, requestCameraPermission]);
 
     const pickImages = useCallback(async () => {
         if (Platform.OS === 'web') {
             await openLibrary();
             return;
         }
-        // iOS/Android: let user choose source via alert.
+
         await new Promise<void>((resolve) => {
             Modal.alert(
                 t('imageUpload.sourceTitle'),
@@ -188,7 +237,7 @@ export function useImagePicker(): UseImagePickerResult {
                 ],
             );
         });
-    }, [openLibrary, openCamera]);
+    }, [openCamera, openLibrary]);
 
     const removeImage = useCallback((id: string) => {
         setSelectedImages(prev => prev.filter(img => img.id !== id));

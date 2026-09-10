@@ -2,6 +2,10 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 vi.mock('expo-image-picker', () => ({}));
+vi.mock('expo-image-manipulator', () => ({
+    SaveFormat: { JPEG: 'jpeg' },
+    manipulateAsync: vi.fn(),
+}));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
 vi.mock('@/utils/thumbhash', () => ({ generateThumbhash: vi.fn() }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
