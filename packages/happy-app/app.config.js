@@ -8,7 +8,7 @@ const name = {
 }[variant];
 const bundleId = {
     development: "com.slopus.happy.dev",
-    preview: "com.slopus.happy.preview",
+    preview: "com.dohertykariann.happy.preview",
     production: "com.ex3ndr.happy"
 }[variant];
 // const stagingElevenLabsAgentId = 'agent_7801k2c0r5hjfraa1kdbytpvs6yt';
