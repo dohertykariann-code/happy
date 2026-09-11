@@ -33,6 +33,7 @@ import { MobileGlassSurface } from './MobileGlass';
 import { AnimatedClickAwayBackdrop, AnimatedFade } from './AnimatedOverlay';
 import { BubblePressable } from './BubblePressable';
 import { resolveAgentInputPrimaryAction } from './agentInputPrimaryAction';
+import { resolveComposerReturnKeyType, resolveComposerSubmitBehavior } from './agentInputComposerBehavior';
 import { NativeSettingsMenu, type NativeSettingsMenuGroup, type NativeSettingsMenuOption } from './NativeSettingsMenu';
 import { ProviderIcon } from './ProviderIcon';
 import { isRigMetadata } from '@/sync/rig';
@@ -2104,7 +2105,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             onStateChange={handleInputStateChange}
                             maxHeight={Platform.OS === 'web' ? 480 : MOBILE_COMPOSER_METRICS.inputMaxHeight}
                             lineHeight={compactMobileComposer ? MOBILE_COMPOSER_METRICS.inputLineHeight : undefined}
-                            submitBehavior={agentInputEnterToSend && Platform.OS !== 'web' ? 'submit' : 'newline'}
+                            submitBehavior={resolveComposerSubmitBehavior(agentInputEnterToSend)}
+                            returnKeyType={resolveComposerReturnKeyType(agentInputEnterToSend)}
                             onSubmitEditing={agentInputEnterToSend && Platform.OS !== 'web' ? handleNativeSubmit : undefined}
                         />
                     </View>
