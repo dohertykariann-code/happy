@@ -1,0 +1,50 @@
+name: Dependabot Auto-Merge
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      # Pinned to a reviewed commit SHA, not a mutable tag — this workflow holds
+      # write permission and merges PRs, so a moved tag is a privileged-path risk.
+      # SHA is dependabot/fetch-metadata v2.5.0. Bump deliberately. (Codex 2026-08-26 #3)
+      - uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+        id: metadata
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Fail closed: only auto-merge when the base branch actually has required
+      # status checks. Without this, a repo with allow_auto_merge + no protection
+      # would merge minor/patch PRs with NO CI gate. A no-CI repo therefore does
+      # NOT auto-merge (clean skip, not a red run) until it gains a CI check.
+      # (Codex 2026-08-26 #2)
+      - name: Check base branch has required status checks
+        id: protection
+        run: |
+          contexts=$(gh api "repos/${GITHUB_REPOSITORY}/branches/${BASE}/protection/required_status_checks" --jq '.contexts | length' 2>/dev/null || echo "0")
+          if [ "${contexts:-0}" -ge 1 ]; then
+            echo "has_checks=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_checks=false" >> "$GITHUB_OUTPUT"
+            echo "No required status checks on ${BASE}; auto-merge will not fire (fail-closed)."
+          fi
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for minor and patch updates
+        if: |
+          steps.protection.outputs.has_checks == 'true' &&
+          (steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+           steps.metadata.outputs.update-type == 'version-update:semver-patch')
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
