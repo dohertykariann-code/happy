@@ -109,6 +109,8 @@ const agentIcons = {
     openclaw: require('@/assets/images/icon-openclaw.png'),
     gemini: require('@/assets/images/icon-gemini.png'),
     agy: require('@/assets/images/icon-agy.png'),
+    openhands_local: require('@/assets/images/icon-gpt.png'),
+    openhands_deepinfra: require('@/assets/images/icon-gpt.png'),
 };
 
 type AgentKey = NewSessionAgentType;
@@ -119,6 +121,8 @@ const ALL_AGENTS: { key: AgentKey; label: string }[] = [
     { key: 'codex', label: 'codex' },
     { key: 'agy', label: 'antigravity' },
     { key: 'rig', label: 'happy' },
+    { key: 'openhands_local', label: 'openhands (local)' },
+    { key: 'openhands_deepinfra', label: 'openhands (deepinfra)' },
 ];
 
 type PickerItem = { key: string; label: string; subtitle?: string; dimmed?: boolean; section?: string };

@@ -12,6 +12,8 @@ export const HARNESS_NAMES: Record<NewSessionAgentType, string> = {
     agy: 'Antigravity',
     gemini: 'Gemini',
     openclaw: 'OpenClaw',
+    openhands_local: 'OpenHands (Local)',
+    openhands_deepinfra: 'OpenHands (DeepInfra)',
 };
 
 /**
@@ -34,13 +36,15 @@ export const HARNESS_ORDER: readonly NewSessionAgentType[] = [
     'codex',
     'agy',
     'rig',
+    'openhands_local',
+    'openhands_deepinfra',
 ];
 
 export function isRetiredHarness(key: NewSessionAgentType | string): boolean {
     return RETIRED_HARNESSES.has(key as NewSessionAgentType);
 }
 
-export type HarnessAvailability = Partial<Record<NewSessionAgentType, boolean>>;
+export type HarnessAvailability = Partial<Record<NewSessionAgentType | 'openhands', boolean>>;
 
 export type HarnessOption = {
     key: NewSessionAgentType;
@@ -62,9 +66,11 @@ export function isHarnessAvailable({
     key: NewSessionAgentType;
 }): boolean {
     if (key === 'rig') return happyAgentAvailable;
-    // Antigravity is niche enough that an old or incomplete capability report
-    // must not advertise it speculatively. Its daemon has to say it is installed.
+    // Antigravity and OpenHands are niche enough that an old or incomplete
+    // capability report must not advertise them speculatively. OpenHands has
+    // one CLI binary, so both provider presets share its single report.
     if (key === 'agy') return availability?.agy === true;
+    if (key === 'openhands_local' || key === 'openhands_deepinfra') return availability?.openhands === true;
     return !availability || availability[key] === true;
 }
 
@@ -90,10 +96,10 @@ export function listAvailableHarnesses({
     selected?: NewSessionAgentType | null;
 }): HarnessOption[] {
     const keys = HARNESS_ORDER.filter((key) => (
-        (key === selected && key !== 'agy')
+        (key === selected && key !== 'agy' && key !== 'openhands_local' && key !== 'openhands_deepinfra')
         || isHarnessAvailable({ availability, happyAgentAvailable, key })
     ));
-    const fallback = HARNESS_ORDER.filter((key) => key !== 'agy');
+    const fallback = HARNESS_ORDER.filter((key) => key !== 'agy' && key !== 'openhands_local' && key !== 'openhands_deepinfra');
     return (keys.length > 0 ? keys : fallback).map((key) => ({
         key,
         name: HARNESS_NAMES[key],

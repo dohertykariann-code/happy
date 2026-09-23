@@ -137,16 +137,19 @@ describe('what a computer can actually run', () => {
         expect(machineChoiceAgentAvailable(choice, 'rig')).toBe(false);
     });
 
-    it('only shows Antigravity and Happy Agent when available on the machine', () => {
+    it('only shows Antigravity, OpenHands, and Happy Agent when available on the machine', () => {
         const absent = collectMachineChoices([cli()])[0];
         const paired = collectMachineChoices([cli(), rig()])[0];
         const installed = collectMachineChoices([machine('agy-machine', {
             host: 'laptop.local',
-            cliAvailability: { claude: true, agy: true },
+            cliAvailability: { claude: true, agy: true, openhands: true },
         })])[0];
 
         expect(machineChoiceAgentVisible(absent, 'agy')).toBe(false);
         expect(machineChoiceAgentVisible(installed, 'agy')).toBe(true);
+        expect(machineChoiceAgentVisible(absent, 'openhands_local')).toBe(false);
+        expect(machineChoiceAgentVisible(installed, 'openhands_local')).toBe(true);
+        expect(machineChoiceAgentVisible(installed, 'openhands_deepinfra')).toBe(true);
         expect(machineChoiceAgentVisible(absent, 'claude')).toBe(true);
         expect(machineChoiceAgentVisible(absent, 'rig')).toBe(false);
         expect(machineChoiceAgentVisible(paired, 'rig')).toBe(true);

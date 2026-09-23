@@ -62,6 +62,7 @@ describe('MachineMetadataSchema', () => {
                 gemini: false,
                 openclaw: false,
                 agy: false,
+                openhands: true,
                 rig: true,
                 detectedAt: 123,
             },
@@ -101,6 +102,7 @@ describe('MachineMetadataSchema', () => {
         });
 
         expect(metadata.cliAvailability?.rig).toBe(true);
+        expect(metadata.cliAvailability?.openhands).toBe(true);
         expect(metadata.defaults?.providerId).toBe('codex');
         expect(metadata.models?.[0]?.thinkingLevels).toEqual(['low', 'high']);
         expect((metadata as any).futureRigMachineField).toEqual({ enabled: true });

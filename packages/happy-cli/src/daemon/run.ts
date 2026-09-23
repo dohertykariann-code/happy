@@ -35,6 +35,7 @@ import {
 } from './sessionEnvironment';
 import { startHappyTerminalDaemon } from './happyTerminalBoot';
 import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode } from './spawnModeArgs';
+import { buildOpenHandsLaunchPlan, isOpenHandsAgent } from './openhandsLaunchPlan';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
@@ -337,6 +338,20 @@ export async function startDaemon(): Promise<void> {
           ...authEnv,
           ...sanitizeSessionEnvironment(options.environmentVariables ?? {}),
         };
+        const openHandsPlan = isOpenHandsAgent(options.agent)
+          ? buildOpenHandsLaunchPlan(options.agent, ambientEnvironment)
+          : null;
+        if (openHandsPlan && 'errorMessage' in openHandsPlan) {
+          return { type: 'error', errorMessage: openHandsPlan.errorMessage };
+        }
+        if (openHandsPlan) {
+          Object.assign(extraEnv, openHandsPlan.env);
+        }
+        // The daemon needs the host key only long enough to map it to OpenHands'
+        // child-only LLM_API_KEY. Do not pass the host variable through.
+        const childAmbientEnvironment = openHandsPlan
+          ? Object.fromEntries(Object.entries(ambientEnvironment).filter(([key]) => key !== 'DEEPINFRA_API_KEY'))
+          : ambientEnvironment;
         if (options.parentSessionId) {
           extraEnv.HAPPY_FORKED_FROM_SESSION_ID = options.parentSessionId;
         }
@@ -361,7 +376,7 @@ export async function startDaemon(): Promise<void> {
         // Expand ${VAR} references from the sanitized daemon environment.
         // This ensures variable substitution works in both tmux and non-tmux modes
         // Example: ANTHROPIC_AUTH_TOKEN="${Z_AI_AUTH_TOKEN}" → ANTHROPIC_AUTH_TOKEN="sk-real-key"
-        extraEnv = expandEnvironmentVariables(extraEnv, ambientEnvironment);
+        extraEnv = expandEnvironmentVariables(extraEnv, childAmbientEnvironment);
         logger.debug(`[DAEMON RUN] After variable expansion: ${Object.keys(extraEnv).join(', ')}`);
 
         // Fail fast if any passed-through environment variable still contains an
@@ -421,20 +436,26 @@ export async function startDaemon(): Promise<void> {
 
           // Construct command for the CLI
           const cliPath = join(projectPath(), 'dist', 'index.mjs');
-          // Determine agent command - support claude, codex, gemini, openclaw, and agy
-          const agent = options.agent === 'gemini' ? 'gemini' : (options.agent === 'codex' ? 'codex' : (options.agent === 'openclaw' ? 'openclaw' : (options.agent === 'agy' ? 'agy' : 'claude')));
+          // Determine agent command - OpenHands enters through Happy's ACP runner.
+          const agent = isOpenHandsAgent(options.agent)
+            ? options.agent
+            : (options.agent === 'gemini' ? 'gemini' : (options.agent === 'codex' ? 'codex' : (options.agent === 'openclaw' ? 'openclaw' : (options.agent === 'agy' ? 'agy' : 'claude'))));
           const resumeId = agent === 'claude'
             ? options.resumeClaudeSessionId
             : (agent === 'codex' ? options.resumeCodexThreadId : undefined);
           const resumeFragment = resumeId
             ? ` --resume ${shellescape(resumeId)}`
             : '';
-          const launchArgs = [
-            agent,
-            '--happy-starting-mode', 'remote',
-            '--started-by', 'daemon',
-          ];
-          appendDaemonSpawnModeArgs(launchArgs, options, agent);
+          const launchArgs = openHandsPlan
+            ? [...openHandsPlan.args]
+            : [
+              agent,
+              '--happy-starting-mode', 'remote',
+              '--started-by', 'daemon',
+            ];
+          if (!openHandsPlan) {
+            appendDaemonSpawnModeArgs(launchArgs, options, agent);
+          }
           const modeFragment = launchArgs.map(shellescape).join(' ');
           const fullCommand = `node --no-warnings --no-deprecation ${shellescape(cliPath)} ${modeFragment}${resumeFragment}`;
           const sanitizedTmuxCommand = wrapTmuxCommandWithSessionEnvironmentSanitizer(fullCommand, extraEnv);
@@ -449,7 +470,7 @@ export async function startDaemon(): Promise<void> {
           const tmuxEnv: Record<string, string> = {};
 
           // Add all safe daemon environment variables (filtering out undefined)
-          for (const [key, value] of Object.entries(buildSessionChildEnvironment(ambientEnvironment, extraEnv))) {
+          for (const [key, value] of Object.entries(buildSessionChildEnvironment(childAmbientEnvironment, extraEnv))) {
             if (value !== undefined) {
               tmuxEnv[key] = value;
             }
@@ -536,18 +557,26 @@ export async function startDaemon(): Promise<void> {
             case 'agy':
               agentCommand = 'agy';
               break;
+            case 'openhands_local':
+            case 'openhands_deepinfra':
+              agentCommand = 'acp';
+              break;
             default:
               return {
                 type: 'error',
                 errorMessage: `Unsupported agent type: '${options.agent}'. Please update your CLI to the latest version.`
               };
           }
-          const args = [
-            agentCommand,
-            '--happy-starting-mode', 'remote',
-            '--started-by', 'daemon'
-          ];
-          appendDaemonSpawnModeArgs(args, options, agentCommand);
+          const args = openHandsPlan
+            ? [...openHandsPlan.args]
+            : [
+              agentCommand,
+              '--happy-starting-mode', 'remote',
+              '--started-by', 'daemon',
+            ];
+          if (!openHandsPlan) {
+            appendDaemonSpawnModeArgs(args, options, agentCommand);
+          }
 
           // Resume ids attach the new Happy session to a pre-existing provider
           // conversation created by the fork / duplicate RPC.
@@ -563,7 +592,7 @@ export async function startDaemon(): Promise<void> {
           return spawnTrackedHappyProcess({
             args,
             cwd: directory,
-            env: buildSessionChildEnvironment(ambientEnvironment, extraEnv),
+            env: buildSessionChildEnvironment(childAmbientEnvironment, extraEnv),
             directoryCreated,
             message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
           });

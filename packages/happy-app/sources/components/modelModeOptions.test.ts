@@ -19,6 +19,8 @@ import {
     groupModelModesByProvider,
     includeConfiguredModel,
     getOpenClawPermissionModes,
+    getHardcodedModelModes,
+    getHardcodedPermissionModes,
     mapMetadataOptions,
     resolveCurrentOption,
 } from './modelModeOptions';
@@ -117,6 +119,12 @@ describe('modelModeOptions', () => {
         const keys = getGeminiPermissionModes(translate).map((mode) => mode.key);
         expect(keys).not.toContain('auto_edit');
         expect(keys).not.toContain('plan');
+    });
+
+    it('keeps OpenHands provider presets fixed in the picker', () => {
+        expect(getHardcodedPermissionModes('openhands_local', translate).map((mode) => mode.key)).toEqual(['default']);
+        expect(getHardcodedModelModes('openhands_local', translate).map((mode) => mode.key)).toEqual(['ollama/qwen2.5:14b']);
+        expect(getHardcodedModelModes('openhands_deepinfra', translate).map((mode) => mode.key)).toEqual(['openai/deepseek-ai/DeepSeek-V4-Flash']);
     });
 
     it('only offers the curated codex harness models, most capable first', () => {

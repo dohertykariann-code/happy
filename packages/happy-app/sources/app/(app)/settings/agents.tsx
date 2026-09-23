@@ -48,6 +48,8 @@ const agentLabels: Record<AgentKey, string> = {
     gemini: getHarnessName('gemini'),
     openclaw: getHarnessName('openclaw'),
     agy: getHarnessName('agy'),
+    openhands_local: getHarnessName('openhands_local'),
+    openhands_deepinfra: getHarnessName('openhands_deepinfra'),
 };
 
 // A retired harness keeps its stored defaults — the schema still carries them,

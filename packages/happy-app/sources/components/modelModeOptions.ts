@@ -222,6 +222,12 @@ export function getOpenClawPermissionModes(translate: Translate): PermissionMode
     ];
 }
 
+function getOpenHandsPermissionModes(): PermissionMode[] {
+    // The daemon pins each OpenHands provider/model preset in its child
+    // environment. ACP owns any provider-specific controls it exposes.
+    return [{ key: 'default', name: 'Default', description: null }];
+}
+
 // agy --print only distinguishes --sandbox (default) from --dangerously-skip-permissions,
 // so only these two modes are offered. Default gets its own wording because agy
 // --print is one-shot and cannot prompt: it never asks, it just runs under agy's
@@ -319,6 +325,9 @@ export function getHardcodedPermissionModes(flavor: AgentFlavor, translate: Tran
     if (flavor === 'agy') {
         return getAgyPermissionModes(translate);
     }
+    if (flavor === 'openhands_local' || flavor === 'openhands_deepinfra') {
+        return getOpenHandsPermissionModes();
+    }
     return getClaudePermissionModes(translate);
 }
 
@@ -326,6 +335,13 @@ export function getOpenClawModelModes(): ModelMode[] {
     return [
         { key: 'default', name: 'Default model', description: null },
     ];
+}
+
+function getOpenHandsModelModes(flavor: AgentFlavor): ModelMode[] {
+    if (flavor === 'openhands_local') {
+        return [{ key: 'ollama/qwen2.5:14b', name: 'Qwen 2.5 14B (Local)', description: null }];
+    }
+    return [{ key: 'openai/deepseek-ai/DeepSeek-V4-Flash', name: 'DeepSeek V4 Flash (DeepInfra)', description: null }];
 }
 
 // Gemini effort is deliberately not encoded into separate model rows. Happy's
@@ -352,6 +368,9 @@ export function getHardcodedModelModes(flavor: AgentFlavor, _translate: Translat
     }
     if (flavor === 'agy') {
         return getAgyModelModes();
+    }
+    if (flavor === 'openhands_local' || flavor === 'openhands_deepinfra') {
+        return getOpenHandsModelModes(flavor);
     }
     return getClaudeModelModes();
 }

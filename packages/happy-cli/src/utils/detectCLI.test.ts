@@ -41,4 +41,15 @@ describe('CLI availability detection', () => {
 
     expect(detectCLIAvailability().agy).toBe(true);
   });
+
+  it('reports OpenHands from one binary check', () => {
+    expect(detectCLIAvailability().openhands).toBe(false);
+
+    mockedExecSync.mockImplementation((command) => {
+      if (command.includes('openhands')) return undefined as never;
+      throw new Error('not installed');
+    });
+
+    expect(detectCLIAvailability().openhands).toBe(true);
+  });
 });

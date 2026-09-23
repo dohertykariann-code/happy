@@ -48,5 +48,7 @@ describe('agent defaults', () => {
         expect(resolveAgentDefaultConfig({}, 'gemini', '1.0.0').permissionMode).toBe('default');
         expect(resolveAgentDefaultConfig({}, 'openclaw', '1.0.0').permissionMode).toBe('default');
         expect(resolveAgentDefaultConfig({}, 'agy', '1.0.0').permissionMode).toBe('default');
+        expect(resolveAgentDefaultConfig({}, 'openhands_local', '1.0.0').modelMode).toBe('ollama/qwen2.5:14b');
+        expect(resolveAgentDefaultConfig({}, 'openhands_deepinfra', '1.0.0').modelMode).toBe('openai/deepseek-ai/DeepSeek-V4-Flash');
     });
 });

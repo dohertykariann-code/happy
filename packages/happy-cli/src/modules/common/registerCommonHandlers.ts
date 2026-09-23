@@ -120,7 +120,7 @@ export interface SpawnSessionOptions {
     directory: string;
     sessionId?: string;
     approvedNewDirectoryCreation?: boolean;
-    agent?: 'claude' | 'codex' | 'gemini' | 'openclaw' | 'agy';
+    agent?: 'claude' | 'codex' | 'gemini' | 'openclaw' | 'agy' | 'openhands_local' | 'openhands_deepinfra';
     permissionMode?: string;
     modelMode?: string;
     effortLevel?: string;

@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { HARNESS_NAMES, isRetiredHarness, listAvailableHarnesses } from './harnessCatalog';
 
 describe('harness catalog', () => {
-    it('names Happy and Antigravity by product, not by CLI id', () => {
+    it('names Happy, Antigravity, and both OpenHands presets by product', () => {
         expect(HARNESS_NAMES.rig).toBe('Happy');
         expect(HARNESS_NAMES.agy).toBe('Antigravity');
+        expect(HARNESS_NAMES.openhands_local).toBe('OpenHands (Local)');
+        expect(HARNESS_NAMES.openhands_deepinfra).toBe('OpenHands (DeepInfra)');
     });
 
     it('retires Gemini and OpenClaw only', () => {
@@ -91,6 +93,20 @@ describe('harness catalog', () => {
             happyAgentAvailable: false,
             selected: 'agy',
         }).map((harness) => harness.key)).toEqual(['claude', 'codex']);
+    });
+
+    it('lists both OpenHands presets from their one shared installation report', () => {
+        expect(listAvailableHarnesses({
+            availability: { claude: true, openhands: true },
+            happyAgentAvailable: false,
+            selected: 'claude',
+        }).map((harness) => harness.key)).toEqual(['claude', 'openhands_local', 'openhands_deepinfra']);
+
+        expect(listAvailableHarnesses({
+            availability: { claude: true, openhands: false },
+            happyAgentAvailable: false,
+            selected: 'openhands_local',
+        }).map((harness) => harness.key)).toEqual(['claude']);
     });
 
     it('falls back to the whole catalog when a machine reports no capabilities', () => {
