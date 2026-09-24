@@ -19,6 +19,10 @@ export function buildOpenHandsLaunchPlan(
       env: {
         LLM_MODEL: 'ollama/qwen2.5:14b',
         LLM_BASE_URL: 'http://localhost:11434',
+        // qwen2.5:14b's tool-call syntax fails OpenHands' native tool calling;
+        // this is a local-only OpenHands patch (see openhands_cli local_agent.py /
+        // agent_store.py), unsupported on DeepInfra's models which need it enabled.
+        LLM_NATIVE_TOOL_CALLING: 'false',
       },
     };
   }

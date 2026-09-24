@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { buildOpenHandsLaunchPlan } from './openhandsLaunchPlan';
 
 describe('OpenHands daemon launch plans', () => {
-  it('launches the local preset through ACP with only its Ollama configuration', () => {
+  it('launches the local preset through ACP with its Ollama configuration and native tool calling disabled', () => {
     expect(buildOpenHandsLaunchPlan('openhands_local', {})).toEqual({
       args: ['acp', 'openhands', '--started-by', 'daemon'],
       env: {
         LLM_MODEL: 'ollama/qwen2.5:14b',
         LLM_BASE_URL: 'http://localhost:11434',
+        LLM_NATIVE_TOOL_CALLING: 'false',
       },
     });
   });
@@ -27,6 +28,7 @@ describe('OpenHands daemon launch plans', () => {
     if ('env' in plan) {
       expect(plan.env).toHaveProperty('LLM_API_KEY');
       expect(plan.env).not.toHaveProperty('DEEPINFRA_API_KEY');
+      expect(plan.env).not.toHaveProperty('LLM_NATIVE_TOOL_CALLING');
     }
   });
 
