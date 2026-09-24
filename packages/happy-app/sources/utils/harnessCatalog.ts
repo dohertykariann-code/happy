@@ -55,6 +55,18 @@ export function getHarnessName(key: NewSessionAgentType | string): string {
     return HARNESS_NAMES[key as NewSessionAgentType] ?? key;
 }
 
+/**
+ * The key an availability report actually uses for this harness. OpenHands
+ * has one CLI binary, so both provider presets share its single report under
+ * the `openhands` key rather than their own `openhands_local`/`openhands_deepinfra`
+ * keys. Any code indexing into an availability report by harness key must go
+ * through this, or the two OpenHands presets read as never-available even
+ * when the machine reports `openhands: true`.
+ */
+export function availabilityKeyFor(key: NewSessionAgentType): NewSessionAgentType | 'openhands' {
+    return key === 'openhands_local' || key === 'openhands_deepinfra' ? 'openhands' : key;
+}
+
 /** Whether this machine has given the app enough evidence to offer a harness. */
 export function isHarnessAvailable({
     availability,

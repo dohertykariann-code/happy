@@ -1,5 +1,5 @@
 import type { NewSessionAgentType } from '@/sync/persistence';
-import { HARNESS_ORDER, isRetiredHarness, type HarnessAvailability } from '@/utils/harnessCatalog';
+import { availabilityKeyFor, HARNESS_ORDER, isRetiredHarness, type HarnessAvailability } from '@/utils/harnessCatalog';
 
 export const NEW_SESSION_AGENT_ORDER = HARNESS_ORDER;
 
@@ -22,13 +22,13 @@ export function resolveMachineAgent(
     availability: CliAvailability | null | undefined,
 ): NewSessionAgentType {
     if (isRetiredHarness(selectedAgent)) {
-        return NEW_SESSION_AGENT_ORDER.find((agent) => !availability || availability[agent])
+        return NEW_SESSION_AGENT_ORDER.find((agent) => !availability || availability[availabilityKeyFor(agent)])
             ?? DEFAULT_AGENT;
     }
 
-    if (!availability || availability[selectedAgent]) {
+    if (!availability || availability[availabilityKeyFor(selectedAgent)]) {
         return selectedAgent;
     }
 
-    return NEW_SESSION_AGENT_ORDER.find((agent) => availability[agent]) ?? selectedAgent;
+    return NEW_SESSION_AGENT_ORDER.find((agent) => availability[availabilityKeyFor(agent)]) ?? selectedAgent;
 }

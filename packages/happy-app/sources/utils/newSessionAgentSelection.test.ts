@@ -58,4 +58,28 @@ describe('resolveMachineAgent', () => {
     it('migrates off a retired harness when capability metadata is missing', () => {
         expect(resolveMachineAgent('gemini', undefined)).toBe('claude');
     });
+
+    // OpenHands has one CLI binary; a machine reports it under the shared
+    // `openhands` key, never under `openhands_local`/`openhands_deepinfra`
+    // themselves. A raw `availability[selectedAgent]` lookup would find
+    // nothing for either preset and silently fall back to the next available
+    // harness even though the machine genuinely has OpenHands installed.
+    it('keeps an OpenHands preset selection when the shared openhands key is available', () => {
+        expect(resolveMachineAgent('openhands_local', {
+            claude: true,
+            openhands: true,
+        })).toBe('openhands_local');
+
+        expect(resolveMachineAgent('openhands_deepinfra', {
+            claude: true,
+            openhands: true,
+        })).toBe('openhands_deepinfra');
+    });
+
+    it('falls back off an OpenHands preset when the shared openhands key is unavailable', () => {
+        expect(resolveMachineAgent('openhands_local', {
+            claude: true,
+            openhands: false,
+        })).toBe('claude');
+    });
 });

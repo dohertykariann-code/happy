@@ -469,11 +469,22 @@ export async function runAcp(opts: {
     metadata: initialMachineMetadata,
   });
 
+  // Lineage from the daemon's spawn RPC (set by app-side fork / duplicate /
+  // second-opinion handoff). Other backends (runClaude.ts, runCodex.ts)
+  // already read these; the ACP runner never did, so every ACP-backed
+  // session (gemini, opencode, OpenHands) silently lost its parent link.
+  const forkedFromSessionId = process.env.HAPPY_FORKED_FROM_SESSION_ID;
+  const forkedFromMessageId = process.env.HAPPY_FORKED_FROM_MESSAGE_ID;
+  const isSideChat = process.env.HAPPY_SIDE_CHAT === '1';
+
   const { state, metadata } = createSessionMetadata({
     flavor: resolveSessionFlavor(opts.agentName),
     machineId: settings.machineId,
     startedBy: opts.startedBy,
     sandbox: settings.sandboxConfig,
+    ...(forkedFromSessionId ? { parentSessionId: forkedFromSessionId } : {}),
+    ...(forkedFromMessageId ? { forkedFromMessageId } : {}),
+    ...(isSideChat ? { isSideChat: true } : {}),
   });
   const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
   if (response) {

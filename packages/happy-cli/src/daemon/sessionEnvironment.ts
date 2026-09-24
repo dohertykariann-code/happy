@@ -51,16 +51,24 @@ export function buildSessionChildEnvironment(
  * tmux windows inherit their server environment, including keys omitted from
  * `new-window -e`. These are the keys the shell must explicitly unset before
  * starting a child, unless this launch intentionally supplies a replacement.
+ *
+ * `additionalKeys` covers launch-specific secrets that never belong in a
+ * child's environment even though they aren't session-identity state (e.g.
+ * a provider host key the daemon only reads to derive a scoped child key).
  */
-export function sessionEnvironmentKeysToUnset(explicitEnv: NodeJS.ProcessEnv = {}): string[] {
-    return SESSION_SCOPED_ENV_KEYS.filter((key) => explicitEnv[key] === undefined);
+export function sessionEnvironmentKeysToUnset(
+    explicitEnv: NodeJS.ProcessEnv = {},
+    additionalKeys: readonly string[] = [],
+): string[] {
+    return [...SESSION_SCOPED_ENV_KEYS, ...additionalKeys].filter((key) => explicitEnv[key] === undefined);
 }
 
 export function wrapTmuxCommandWithSessionEnvironmentSanitizer(
     command: string,
     explicitEnv: NodeJS.ProcessEnv = {},
+    additionalKeys: readonly string[] = [],
 ): string {
-    const keysToUnset = sessionEnvironmentKeysToUnset(explicitEnv);
+    const keysToUnset = sessionEnvironmentKeysToUnset(explicitEnv, additionalKeys);
     if (keysToUnset.length === 0) {
         return command;
     }

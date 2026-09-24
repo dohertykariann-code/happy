@@ -344,9 +344,6 @@ export async function startDaemon(): Promise<void> {
         if (openHandsPlan && 'errorMessage' in openHandsPlan) {
           return { type: 'error', errorMessage: openHandsPlan.errorMessage };
         }
-        if (openHandsPlan) {
-          Object.assign(extraEnv, openHandsPlan.env);
-        }
         // The daemon needs the host key only long enough to map it to OpenHands'
         // child-only LLM_API_KEY. Do not pass the host variable through.
         const childAmbientEnvironment = openHandsPlan
@@ -410,6 +407,16 @@ export async function startDaemon(): Promise<void> {
           };
         }
 
+        // OpenHands' env is merged in after ${VAR} expansion, not before: its
+        // model/base-url values are fixed literals and LLM_API_KEY is an
+        // opaque credential passed through byte-for-byte, none of it is meant
+        // to go through profile-style ${VAR} substitution or the unresolved-
+        // reference check above (a coincidental "${" in a real API key must
+        // not be rewritten or rejected).
+        if (openHandsPlan) {
+          Object.assign(extraEnv, openHandsPlan.env);
+        }
+
         // Check if tmux is available and should be used
         const tmuxAvailable = await isTmuxAvailable();
         let useTmux = tmuxAvailable;
@@ -458,7 +465,11 @@ export async function startDaemon(): Promise<void> {
           }
           const modeFragment = launchArgs.map(shellescape).join(' ');
           const fullCommand = `node --no-warnings --no-deprecation ${shellescape(cliPath)} ${modeFragment}${resumeFragment}`;
-          const sanitizedTmuxCommand = wrapTmuxCommandWithSessionEnvironmentSanitizer(fullCommand, extraEnv);
+          // tmux windows inherit the server's full environment, not just the
+          // -e values below, so a host secret the daemon read but never meant
+          // to forward (DEEPINFRA_API_KEY) must be explicitly unset here too.
+          const tmuxAdditionalUnsetKeys = openHandsPlan ? ['DEEPINFRA_API_KEY'] : [];
+          const sanitizedTmuxCommand = wrapTmuxCommandWithSessionEnvironmentSanitizer(fullCommand, extraEnv, tmuxAdditionalUnsetKeys);
 
           // Spawn in tmux with environment variables.
           // IMPORTANT: Pass the complete safe environment (ambient + extraEnv) because:
