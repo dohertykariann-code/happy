@@ -766,4 +766,52 @@ describe('runAcp', () => {
       expect(metadata).not.toHaveProperty('isSideChat');
     });
   });
+
+  describe('session flavor', () => {
+    // The daemon launches both OpenHands presets through the same ACP runner
+    // but with distinct agent names (openhandsLaunchPlan.ts + acpAgentConfig.ts).
+    // Recording a preset-specific flavor, not a generic "acp" one, is what lets
+    // the session-info screen, analytics, and the "ask another model" handoff
+    // menu tell which OpenHands preset is actually running.
+    it.each(['openhands_local', 'openhands_deepinfra'] as const)(
+      'records %s as its own session flavor, not the generic "acp" bucket',
+      async (agentName) => {
+        const runPromise = runAcp({
+          credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+          agentName,
+          command: 'openhands',
+          args: ['acp'],
+        });
+
+        await vi.waitFor(() => {
+          expect(mocks.mockGetOrCreateSession).toHaveBeenCalled();
+        });
+
+        await mocks.getKillHandler()!();
+        await runPromise;
+
+        const [{ metadata }] = mocks.mockGetOrCreateSession.mock.calls[0];
+        expect(metadata.flavor).toBe(agentName);
+      },
+    );
+
+    it('still buckets other ACP-driven agents (besides gemini/opencode) under the generic "acp" flavor', async () => {
+      const runPromise = runAcp({
+        credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        agentName: 'some-future-acp-agent',
+        command: 'some-future-acp-agent',
+        args: [],
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.mockGetOrCreateSession).toHaveBeenCalled();
+      });
+
+      await mocks.getKillHandler()!();
+      await runPromise;
+
+      const [{ metadata }] = mocks.mockGetOrCreateSession.mock.calls[0];
+      expect(metadata.flavor).toBe('acp');
+    });
+  });
 });

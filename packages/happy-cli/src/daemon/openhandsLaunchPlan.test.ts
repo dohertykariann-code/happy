@@ -5,7 +5,7 @@ import { buildOpenHandsLaunchPlan } from './openhandsLaunchPlan';
 describe('OpenHands daemon launch plans', () => {
   it('launches the local preset through ACP with its Ollama configuration and native tool calling disabled', () => {
     expect(buildOpenHandsLaunchPlan('openhands_local', {})).toEqual({
-      args: ['acp', 'openhands', '--started-by', 'daemon'],
+      args: ['acp', 'openhands_local', '--started-by', 'daemon'],
       env: {
         LLM_MODEL: 'ollama/qwen2.5:14b',
         LLM_BASE_URL: 'http://localhost:11434',
@@ -18,7 +18,7 @@ describe('OpenHands daemon launch plans', () => {
     const plan = buildOpenHandsLaunchPlan('openhands_deepinfra', { DEEPINFRA_API_KEY: 'test-key' });
 
     expect(plan).toMatchObject({
-      args: ['acp', 'openhands', '--started-by', 'daemon'],
+      args: ['acp', 'openhands_deepinfra', '--started-by', 'daemon'],
       env: {
         LLM_MODEL: 'openai/deepseek-ai/DeepSeek-V4-Flash',
         LLM_BASE_URL: 'https://api.deepinfra.com/v1/openai',

@@ -79,6 +79,21 @@ export function getHandoffAvailabilityKey(agent: HandoffAgent): HandoffAvailabil
     return agent === 'openhands_local' || agent === 'openhands_deepinfra' ? 'openhands' : agent;
 }
 
+/**
+ * Which other models this session can hand off to right now: online per
+ * `avail`, minus whichever one this session is already running. `current`
+ * must be the session's own flavor value (e.g. `openhands_local`), not the
+ * shared availability key, or every OpenHands preset would wrongly offer
+ * itself as a target since both share one `openhands` availability flag.
+ */
+export function resolveHandoffTargets(
+    current: string | null | undefined,
+    avail: Partial<Record<HandoffAvailabilityKey, boolean>> | null | undefined,
+): HandoffAgent[] {
+    if (!avail) return [];
+    return HANDOFF_AGENTS.filter((x) => x.agent !== current && avail[getHandoffAvailabilityKey(x.agent)]).map((x) => x.agent);
+}
+
 interface UseSessionQuickActionsOptions {
     onAfterArchive?: () => void;
     onAfterDelete?: () => void;
@@ -343,10 +358,8 @@ export function useSessionQuickActions(
     // so it ships with a kill switch; never offers the session's own current flavor.
     const handoffTargets = React.useMemo<HandoffAgent[]>(() => {
         if (!continuationExperimentsEnabled) return [];
-        const avail = machine?.metadata?.cliAvailability;
-        if (!machine || !isMachineOnline(machine) || !avail) return [];
-        const current = session.metadata?.flavor;
-        return HANDOFF_AGENTS.filter((x) => x.agent !== current && avail[getHandoffAvailabilityKey(x.agent)]).map((x) => x.agent);
+        if (!machine || !isMachineOnline(machine)) return [];
+        return resolveHandoffTargets(session.metadata?.flavor, machine?.metadata?.cliAvailability);
     }, [continuationExperimentsEnabled, machine, session.metadata?.flavor]);
 
     // Serialize the conversation and open a fresh session on the target model with

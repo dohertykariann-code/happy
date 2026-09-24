@@ -15,7 +15,7 @@ export function buildOpenHandsLaunchPlan(
 ): OpenHandsLaunchPlan | { errorMessage: string } {
   if (agent === 'openhands_local') {
     return {
-      args: ['acp', 'openhands', '--started-by', 'daemon'],
+      args: ['acp', 'openhands_local', '--started-by', 'daemon'],
       env: {
         LLM_MODEL: 'ollama/qwen2.5:14b',
         LLM_BASE_URL: 'http://localhost:11434',
@@ -35,7 +35,7 @@ export function buildOpenHandsLaunchPlan(
   }
 
   return {
-    args: ['acp', 'openhands', '--started-by', 'daemon'],
+    args: ['acp', 'openhands_deepinfra', '--started-by', 'daemon'],
     env: {
       LLM_MODEL: 'openai/deepseek-ai/DeepSeek-V4-Flash',
       LLM_BASE_URL: 'https://api.deepinfra.com/v1/openai',

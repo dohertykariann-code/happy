@@ -24,6 +24,7 @@ import { useSessionQuickActions } from '@/hooks/useSessionQuickActions';
 import { copySessionMetadataToClipboard, copySessionMetadataAndLogsToClipboard } from '@/utils/copySessionMetadataToClipboard';
 import { HappyError } from '@/utils/errors';
 import { getRigIdentity, isRigMetadata } from '@/sync/rig';
+import { HARNESS_NAMES } from '@/utils/harnessCatalog';
 import { MOBILE_GLASS_HEADER_HEIGHT } from '@/components/navigation/headerMetrics';
 
 function formatSandboxMetadata(sandbox: unknown, homeDir?: string): string {
@@ -420,6 +421,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                                 if (flavor === 'gpt' || flavor === 'openai') return 'Codex';
                                 if (flavor === 'gemini') return 'Gemini';
                                 if (flavor === 'openclaw') return 'OpenClaw';
+                                if (flavor === 'openhands_local' || flavor === 'openhands_deepinfra') return HARNESS_NAMES[flavor];
                                 return flavor;
                             })()}
                             icon={<Ionicons name="sparkles-outline" size={29} color="#5856D6" />}

@@ -7,6 +7,8 @@ describe('KNOWN_ACP_AGENTS', () => {
       gemini: { command: 'gemini', args: ['--experimental-acp'] },
       opencode: { command: 'opencode', args: ['acp'] },
       openhands: { command: 'openhands', args: ['acp'] },
+      openhands_local: { command: 'openhands', args: ['acp'] },
+      openhands_deepinfra: { command: 'openhands', args: ['acp'] },
     });
   });
 });
@@ -31,6 +33,19 @@ describe('resolveAcpAgentConfig', () => {
   it('resolves OpenHands to its ACP command', () => {
     expect(resolveAcpAgentConfig(['openhands'])).toEqual({
       agentName: 'openhands',
+      command: 'openhands',
+      args: ['acp'],
+    });
+  });
+
+  it('resolves each OpenHands preset to the same binary under its own agent name', () => {
+    expect(resolveAcpAgentConfig(['openhands_local'])).toEqual({
+      agentName: 'openhands_local',
+      command: 'openhands',
+      args: ['acp'],
+    });
+    expect(resolveAcpAgentConfig(['openhands_deepinfra'])).toEqual({
+      agentName: 'openhands_deepinfra',
       command: 'openhands',
       args: ['acp'],
     });

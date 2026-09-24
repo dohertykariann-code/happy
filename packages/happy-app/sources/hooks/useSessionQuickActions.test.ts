@@ -30,7 +30,7 @@ vi.mock('expo-router', () => ({ useRouter: vi.fn() }));
 vi.mock('@/components/DuplicateSheet', () => ({ DuplicateSheet: vi.fn() }));
 vi.mock('@/sync/rig', () => ({ isRigMetadata: vi.fn() }));
 
-import { buildSecondOpinionMessage, getHandoffAvailabilityKey } from './useSessionQuickActions';
+import { buildSecondOpinionMessage, getHandoffAvailabilityKey, resolveHandoffTargets } from './useSessionQuickActions';
 
 describe('useSessionQuickActions handoff helpers', () => {
     it('serializes chronological non-thinking conversation turns', () => {
@@ -59,5 +59,38 @@ describe('useSessionQuickActions handoff helpers', () => {
         expect(getHandoffAvailabilityKey('openhands_local')).toBe('openhands');
         expect(getHandoffAvailabilityKey('openhands_deepinfra')).toBe('openhands');
         expect(getHandoffAvailabilityKey('codex')).toBe('codex');
+    });
+
+    describe('resolveHandoffTargets', () => {
+        it('excludes the session\'s own OpenHands preset while still offering the other one', () => {
+            // Regression case: when both presets shared the generic "acp" flavor,
+            // `current` could never equal either preset's agent id, so a session
+            // already running openhands_local would wrongly offer itself again.
+            const targets = resolveHandoffTargets('openhands_local', { claude: true, codex: true, openhands: true });
+
+            expect(targets).not.toContain('openhands_local');
+            expect(targets).toContain('openhands_deepinfra');
+            expect(targets).toContain('claude');
+            expect(targets).toContain('codex');
+        });
+
+        it('excludes the other OpenHands preset symmetrically', () => {
+            const targets = resolveHandoffTargets('openhands_deepinfra', { openhands: true });
+
+            expect(targets).toContain('openhands_local');
+            expect(targets).not.toContain('openhands_deepinfra');
+        });
+
+        it('omits an unavailable target even if it is not the current session', () => {
+            const targets = resolveHandoffTargets('claude', { claude: true, codex: false, openhands: true });
+
+            expect(targets).not.toContain('codex');
+            expect(targets).toContain('openhands_local');
+        });
+
+        it('returns nothing without an availability report', () => {
+            expect(resolveHandoffTargets('claude', null)).toEqual([]);
+            expect(resolveHandoffTargets('claude', undefined)).toEqual([]);
+        });
     });
 });
