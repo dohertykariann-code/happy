@@ -81,6 +81,17 @@ type MetadataOption = {
     description?: string | null;
 };
 
+type ClaudeModelOption = {
+    value: string;
+    resolvedModel?: string;
+    displayName: string;
+    description: string;
+    supportsEffort?: boolean;
+    supportedEffortLevels?: string[];
+    supportsAdaptiveThinking?: boolean;
+    supportsFastMode?: boolean;
+};
+
 const GEMINI_MODEL_FALLBACKS: ModelMode[] = [
     { key: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', description: 'latest & most capable' },
     { key: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', description: 'latest & fast' },
@@ -154,9 +165,10 @@ export function getGeminiPermissionModes(translate: Translate): PermissionMode[]
     ];
 }
 
-// The current generation only. Older Claudes and the `default model` row are
-// deliberately absent: picking a model is the point of this menu, and every
-// entry here is a 5.
+// The fallback is current-generation only. Older Claudes and the `default
+// model` row are deliberately absent: picking a model is the point of this
+// menu, and every fallback entry here is a 5. A live CLI catalog above is
+// authoritative and may include additional valid rows.
 //
 // Keys are full model IDs rather than the short aliases, because the aliases
 // do not all mean what the row says. `sonnet` still resolves to Sonnet 4.6 in
@@ -166,7 +178,17 @@ export function getGeminiPermissionModes(translate: Translate): PermissionMode[]
 // the model ID Claude Code accepts (`claude --model 'claude-opus-5[1m]'`) and
 // selects the 1M-context variant; unknown bracket models are rejected, so the
 // suffix is honored rather than silently dropped (#1721).
-export function getClaudeModelModes(): ModelMode[] {
+export function getClaudeModelModes(claudeModels?: readonly ClaudeModelOption[] | null): ModelMode[] {
+    if (claudeModels && claudeModels.length > 0) {
+        return claudeModels.map((model) => ({
+            key: model.value,
+            name: model.displayName,
+            description: model.description,
+            modelId: model.resolvedModel,
+            providerId: 'anthropic',
+            providerName: 'Anthropic',
+        }));
+    }
     return [
         { key: 'claude-fable-5-1', name: 'Fable 5.1', description: '1M context', providerId: 'anthropic', providerName: 'Anthropic' },
         { key: 'claude-fable-5', name: 'Fable 5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
@@ -380,6 +402,7 @@ export function getAvailableModels(
     metadata: Metadata | null | undefined,
     translate: Translate,
     selectedKey?: string | null,
+    claudeModels?: readonly ClaudeModelOption[] | null,
 ): ModelMode[] {
     if (isRigMetadataV1(metadata)) {
         const models: ModelMode[] = sortRigModelsForPicker(getRigModels(metadata)).map((model) => ({
@@ -439,7 +462,7 @@ export function getAvailableModels(
     }
     return includeConfiguredModel(
         flavor,
-        getHardcodedModelModes(flavor, translate),
+        flavor === 'claude' ? getClaudeModelModes(claudeModels) : getHardcodedModelModes(flavor, translate),
         selectedKey,
     );
 }

@@ -175,6 +175,37 @@ describe('modelModeOptions', () => {
         expect(models.some((model) => ['opus', 'sonnet', 'fable', 'haiku'].includes(model.key))).toBe(false);
     });
 
+    it('renders CLI-verified Claude models when machine metadata has a live list', () => {
+        expect(getClaudeModelModes([
+            {
+                value: 'claude-opus-5-5',
+                resolvedModel: 'claude-opus-5-5',
+                displayName: 'Opus 5.5',
+                description: 'Latest and most capable',
+                supportsEffort: true,
+            },
+        ])).toEqual([
+            {
+                key: 'claude-opus-5-5',
+                name: 'Opus 5.5',
+                description: 'Latest and most capable',
+                modelId: 'claude-opus-5-5',
+                providerId: 'anthropic',
+                providerName: 'Anthropic',
+            },
+        ]);
+    });
+
+    it('keeps the hardcoded Claude catalog when live metadata is absent', () => {
+        expect(getClaudeModelModes(undefined).map((model) => model.key)).toEqual([
+            'claude-fable-5-1',
+            'claude-fable-5',
+            'claude-opus-5',
+            'claude-opus-5[1m]',
+            'claude-sonnet-5',
+        ]);
+    });
+
     it('offers every codex model the levels its own registry publishes', () => {
         // Straight from Codex's model registry: astra, sol, and terra publish
         // ultra, luna does not. The difference is the whole point of asking
