@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { KNOWN_ACP_AGENTS, resolveAcpAgentConfig } from './acpAgentConfig';
 
 describe('KNOWN_ACP_AGENTS', () => {
-  it('defines built-in Gemini and OpenCode command mappings', () => {
+  it('defines built-in Gemini, OpenCode, and OpenHands command mappings', () => {
     expect(KNOWN_ACP_AGENTS).toEqual({
       gemini: { command: 'gemini', args: ['--experimental-acp'] },
       opencode: { command: 'opencode', args: ['acp'] },
+      openhands: { command: 'openhands', args: ['acp'] },
+      openhands_local: { command: 'openhands', args: ['acp'] },
+      openhands_deepinfra: { command: 'openhands', args: ['acp'] },
     });
   });
 });
@@ -24,6 +27,27 @@ describe('resolveAcpAgentConfig', () => {
       agentName: 'opencode',
       command: 'opencode',
       args: ['acp', '--foo'],
+    });
+  });
+
+  it('resolves OpenHands to its ACP command', () => {
+    expect(resolveAcpAgentConfig(['openhands'])).toEqual({
+      agentName: 'openhands',
+      command: 'openhands',
+      args: ['acp'],
+    });
+  });
+
+  it('resolves each OpenHands preset to the same binary under its own agent name', () => {
+    expect(resolveAcpAgentConfig(['openhands_local'])).toEqual({
+      agentName: 'openhands_local',
+      command: 'openhands',
+      args: ['acp'],
+    });
+    expect(resolveAcpAgentConfig(['openhands_deepinfra'])).toEqual({
+      agentName: 'openhands_deepinfra',
+      command: 'openhands',
+      args: ['acp'],
     });
   });
 

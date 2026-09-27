@@ -28,6 +28,11 @@ export type SessionActionShortcutId =
     | 'duplicate'
     | 'copy-metadata'
     | 'copy-metadata-and-logs'
+    | 'handoff-claude'
+    | 'handoff-codex'
+    | 'handoff-gemini'
+    | 'handoff-openhands_local'
+    | 'handoff-openhands_deepinfra'
     | 'archive';
 
 export type SidebarPickerShortcutId = 'changes' | 'allFiles' | 'newSideChat';
@@ -47,6 +52,11 @@ export const SESSION_ACTION_SHORTCUTS: Readonly<Record<SessionActionShortcutId, 
     duplicate: { key: 'd', code: 'KeyD', keyLabel: 'D', altKey: true, shiftKey: true },
     'copy-metadata': { key: 'm', code: 'KeyM', keyLabel: 'M', altKey: true },
     'copy-metadata-and-logs': { key: 'm', code: 'KeyM', keyLabel: 'M', altKey: true, shiftKey: true },
+    'handoff-claude': { key: '1', code: 'Digit1', keyLabel: '1', altKey: true },
+    'handoff-codex': { key: '2', code: 'Digit2', keyLabel: '2', altKey: true },
+    'handoff-gemini': { key: '3', code: 'Digit3', keyLabel: '3', altKey: true },
+    'handoff-openhands_local': { key: '4', code: 'Digit4', keyLabel: '4', altKey: true },
+    'handoff-openhands_deepinfra': { key: '5', code: 'Digit5', keyLabel: '5', altKey: true },
     archive: { key: 'a', code: 'KeyA', keyLabel: 'A', shiftKey: true },
 };
 

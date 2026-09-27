@@ -34,29 +34,12 @@ import {
   wrapTmuxCommandWithSessionEnvironmentSanitizer,
 } from './sessionEnvironment';
 import { startHappyTerminalDaemon } from './happyTerminalBoot';
+import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode } from './spawnModeArgs';
+import { buildOpenHandsLaunchPlan, isOpenHandsAgent } from './openhandsLaunchPlan';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
     return "'" + s.replace(/'/g, "'\\''") + "'";
-}
-
-function appendDaemonSpawnModeArgs(args: string[], options: SpawnSessionOptions, agent: string): void {
-  if (agent !== 'claude' && agent !== 'codex') {
-    return;
-  }
-  // 'default' is the app's "no override" value for every agent: it means run
-  // the harness the way it is already configured. Forwarding it would replace
-  // that configuration with one specific mode, which is the opposite of what
-  // the word promises. Each runner supplies its own launch default instead.
-  if (options.permissionMode && options.permissionMode !== 'default') {
-    args.push('--permission-mode', options.permissionMode);
-  }
-  if (options.modelMode && options.modelMode !== 'default') {
-    args.push('--model', options.modelMode);
-  }
-  if (options.effortLevel) {
-    args.push('--effort', options.effortLevel);
-  }
 }
 
 // Prepare initial metadata
@@ -355,6 +338,17 @@ export async function startDaemon(): Promise<void> {
           ...authEnv,
           ...sanitizeSessionEnvironment(options.environmentVariables ?? {}),
         };
+        const openHandsPlan = isOpenHandsAgent(options.agent)
+          ? buildOpenHandsLaunchPlan(options.agent, ambientEnvironment)
+          : null;
+        if (openHandsPlan && 'errorMessage' in openHandsPlan) {
+          return { type: 'error', errorMessage: openHandsPlan.errorMessage };
+        }
+        // The daemon needs the host key only long enough to map it to OpenHands'
+        // child-only LLM_API_KEY. Do not pass the host variable through.
+        const childAmbientEnvironment = openHandsPlan
+          ? Object.fromEntries(Object.entries(ambientEnvironment).filter(([key]) => key !== 'DEEPINFRA_API_KEY'))
+          : ambientEnvironment;
         if (options.parentSessionId) {
           extraEnv.HAPPY_FORKED_FROM_SESSION_ID = options.parentSessionId;
         }
@@ -379,7 +373,7 @@ export async function startDaemon(): Promise<void> {
         // Expand ${VAR} references from the sanitized daemon environment.
         // This ensures variable substitution works in both tmux and non-tmux modes
         // Example: ANTHROPIC_AUTH_TOKEN="${Z_AI_AUTH_TOKEN}" → ANTHROPIC_AUTH_TOKEN="sk-real-key"
-        extraEnv = expandEnvironmentVariables(extraEnv, ambientEnvironment);
+        extraEnv = expandEnvironmentVariables(extraEnv, childAmbientEnvironment);
         logger.debug(`[DAEMON RUN] After variable expansion: ${Object.keys(extraEnv).join(', ')}`);
 
         // Fail fast if any passed-through environment variable still contains an
@@ -413,6 +407,16 @@ export async function startDaemon(): Promise<void> {
           };
         }
 
+        // OpenHands' env is merged in after ${VAR} expansion, not before: its
+        // model/base-url values are fixed literals and LLM_API_KEY is an
+        // opaque credential passed through byte-for-byte, none of it is meant
+        // to go through profile-style ${VAR} substitution or the unresolved-
+        // reference check above (a coincidental "${" in a real API key must
+        // not be rewritten or rejected).
+        if (openHandsPlan) {
+          Object.assign(extraEnv, openHandsPlan.env);
+        }
+
         // Check if tmux is available and should be used
         const tmuxAvailable = await isTmuxAvailable();
         let useTmux = tmuxAvailable;
@@ -439,23 +443,33 @@ export async function startDaemon(): Promise<void> {
 
           // Construct command for the CLI
           const cliPath = join(projectPath(), 'dist', 'index.mjs');
-          // Determine agent command - support claude, codex, gemini, openclaw, and agy
-          const agent = options.agent === 'gemini' ? 'gemini' : (options.agent === 'codex' ? 'codex' : (options.agent === 'openclaw' ? 'openclaw' : (options.agent === 'agy' ? 'agy' : 'claude')));
+          // Determine agent command - OpenHands enters through Happy's ACP runner.
+          const agent = isOpenHandsAgent(options.agent)
+            ? options.agent
+            : (options.agent === 'gemini' ? 'gemini' : (options.agent === 'codex' ? 'codex' : (options.agent === 'openclaw' ? 'openclaw' : (options.agent === 'agy' ? 'agy' : 'claude'))));
           const resumeId = agent === 'claude'
             ? options.resumeClaudeSessionId
             : (agent === 'codex' ? options.resumeCodexThreadId : undefined);
           const resumeFragment = resumeId
             ? ` --resume ${shellescape(resumeId)}`
             : '';
-          const launchArgs = [
-            agent,
-            '--happy-starting-mode', 'remote',
-            '--started-by', 'daemon',
-          ];
-          appendDaemonSpawnModeArgs(launchArgs, options, agent);
+          const launchArgs = openHandsPlan
+            ? [...openHandsPlan.args]
+            : [
+              agent,
+              '--happy-starting-mode', 'remote',
+              '--started-by', 'daemon',
+            ];
+          if (!openHandsPlan) {
+            appendDaemonSpawnModeArgs(launchArgs, options, agent);
+          }
           const modeFragment = launchArgs.map(shellescape).join(' ');
           const fullCommand = `node --no-warnings --no-deprecation ${shellescape(cliPath)} ${modeFragment}${resumeFragment}`;
-          const sanitizedTmuxCommand = wrapTmuxCommandWithSessionEnvironmentSanitizer(fullCommand, extraEnv);
+          // tmux windows inherit the server's full environment, not just the
+          // -e values below, so a host secret the daemon read but never meant
+          // to forward (DEEPINFRA_API_KEY) must be explicitly unset here too.
+          const tmuxAdditionalUnsetKeys = openHandsPlan ? ['DEEPINFRA_API_KEY'] : [];
+          const sanitizedTmuxCommand = wrapTmuxCommandWithSessionEnvironmentSanitizer(fullCommand, extraEnv, tmuxAdditionalUnsetKeys);
 
           // Spawn in tmux with environment variables.
           // IMPORTANT: Pass the complete safe environment (ambient + extraEnv) because:
@@ -467,7 +481,7 @@ export async function startDaemon(): Promise<void> {
           const tmuxEnv: Record<string, string> = {};
 
           // Add all safe daemon environment variables (filtering out undefined)
-          for (const [key, value] of Object.entries(buildSessionChildEnvironment(ambientEnvironment, extraEnv))) {
+          for (const [key, value] of Object.entries(buildSessionChildEnvironment(childAmbientEnvironment, extraEnv))) {
             if (value !== undefined) {
               tmuxEnv[key] = value;
             }
@@ -554,18 +568,26 @@ export async function startDaemon(): Promise<void> {
             case 'agy':
               agentCommand = 'agy';
               break;
+            case 'openhands_local':
+            case 'openhands_deepinfra':
+              agentCommand = 'acp';
+              break;
             default:
               return {
                 type: 'error',
                 errorMessage: `Unsupported agent type: '${options.agent}'. Please update your CLI to the latest version.`
               };
           }
-          const args = [
-            agentCommand,
-            '--happy-starting-mode', 'remote',
-            '--started-by', 'daemon'
-          ];
-          appendDaemonSpawnModeArgs(args, options, agentCommand);
+          const args = openHandsPlan
+            ? [...openHandsPlan.args]
+            : [
+              agentCommand,
+              '--happy-starting-mode', 'remote',
+              '--started-by', 'daemon',
+            ];
+          if (!openHandsPlan) {
+            appendDaemonSpawnModeArgs(args, options, agentCommand);
+          }
 
           // Resume ids attach the new Happy session to a pre-existing provider
           // conversation created by the fork / duplicate RPC.
@@ -581,7 +603,7 @@ export async function startDaemon(): Promise<void> {
           return spawnTrackedHappyProcess({
             args,
             cwd: directory,
-            env: buildSessionChildEnvironment(ambientEnvironment, extraEnv),
+            env: buildSessionChildEnvironment(childAmbientEnvironment, extraEnv),
             directoryCreated,
             message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
           });
@@ -738,10 +760,9 @@ export async function startDaemon(): Promise<void> {
         if (options?.model) {
           launch.args.push('--model', options.model);
         }
-        // Same as spawnSession: ambient 'default' must not override whatever
-        // the harness is already configured to do.
-        if (options?.permissionMode && options.permissionMode !== 'default') {
-          launch.args.push('--permission-mode', options.permissionMode);
+        const resumePermissionMode = options?.permissionMode;
+        if (shouldForwardDaemonPermissionMode(metadata.flavor ?? 'claude', resumePermissionMode)) {
+          launch.args.push('--permission-mode', resumePermissionMode);
         }
 
         await fs.access(launch.cwd);
@@ -778,11 +799,34 @@ export async function startDaemon(): Promise<void> {
           (sessionId.startsWith('PID-') && pid === parseInt(sessionId.replace('PID-', '')))) {
 
           if (session.startedBy === 'daemon' && session.childProcess) {
-            try {
-              session.childProcess.kill('SIGTERM');
-              logger.debug(`[DAEMON RUN] Sent SIGTERM to daemon-spawned session ${sessionId}`);
-            } catch (error) {
-              logger.debug(`[DAEMON RUN] Failed to kill session ${sessionId}:`, error);
+            // Signal the whole process group, not just the Happy CLI parent.
+            // The harness runs its own backend as a grandchild — Codex spawns
+            // `codex app-server` (codexAppServerClient.ts:647) and only kills it
+            // from its own disconnect path, which a bare SIGTERM to the parent
+            // never reaches. Killing the parent alone therefore left the agent
+            // running, reparented and invisible. The daemon spawns with
+            // `detached: true` (see spawnSession above), which makes the parent
+            // a group leader, so the negative pid covers every descendant.
+            let signalled = false;
+            if (process.platform !== 'win32') {
+              try {
+                process.kill(-pid, 'SIGTERM');
+                signalled = true;
+                logger.debug(`[DAEMON RUN] Sent SIGTERM to process group of session ${sessionId}`);
+              } catch (error) {
+                logger.debug(`[DAEMON RUN] Group kill failed for session ${sessionId}, falling back:`, error);
+              }
+            }
+            // Windows has no process groups to signal, and a group kill can
+            // still fail if the child already exited or never led a group.
+            // Either way the parent is worth killing on its own.
+            if (!signalled) {
+              try {
+                session.childProcess.kill('SIGTERM');
+                logger.debug(`[DAEMON RUN] Sent SIGTERM to daemon-spawned session ${sessionId}`);
+              } catch (error) {
+                logger.debug(`[DAEMON RUN] Failed to kill session ${sessionId}:`, error);
+              }
             }
           } else {
             // For externally started sessions, try to kill by PID

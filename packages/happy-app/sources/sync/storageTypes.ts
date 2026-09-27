@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { RigBotSchema } from '@slopus/happy-wire';
 
 //
 // Agent states
 //
 
 export const MetadataSchema = z.object({
+    bot: RigBotSchema.optional(),
     models: z.array(z.object({
         code: z.string(),
         value: z.string(),
@@ -350,6 +352,11 @@ export const AgentStateSchema = z.object({
         reason: z.string().nullish(),
         mode: z.string().nullish(),
         allowedTools: z.array(z.string()).nullish(),
+        // The CLI completes a request by echoing the RPC's own field name,
+        // `allowTools`, so every deployed CLI reports the "don't ask again"
+        // grant under this key. Declared here so parsing keeps it; the
+        // reducer folds it into `allowedTools` when reading.
+        allowTools: z.array(z.string()).nullish(),
         decision: z.enum(['approved', 'approved_for_session', 'denied', 'abort']).nullish(),
         toolUseId: z.string().nullish()
     })).nullish(),
@@ -386,6 +393,8 @@ export interface Session {
     updatedAt: number,
     active: boolean,
     activeAt: number,
+    /** Account-scoped Project linkage supplied beside the encrypted session. */
+    projectId?: string | null,
     metadata: Metadata | null,
     metadataVersion: number,
     agentState: AgentState | null,
@@ -446,6 +455,7 @@ export const MachineMetadataSchema = z.object({
         gemini: z.boolean(),
         openclaw: z.boolean(),
         agy: z.boolean().optional(), // optional: older CLIs don't report agy
+        openhands: z.boolean().optional(), // optional: older CLIs don't report OpenHands
         rig: z.boolean().optional(), // Rig runs its own Happy-connected daemon
         detectedAt: z.number(),
     }).optional(),

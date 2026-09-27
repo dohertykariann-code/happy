@@ -224,7 +224,20 @@ export class ApiSessionClient extends EventEmitter {
         startedSubagents: new Set<string>(),
         activeSubagents: new Set<string>(),
     };
-    private lastSeq = 0;
+    private firstUserMessageText: string | null = null;
+    private fallbackTitleApplied = false;
+    /**
+     * How far this client has consumed the session's message log.
+     *
+     * A session has one seq counter and both sides draw from it, so this must
+     * only ever move over messages actually routed. It used to also be advanced
+     * by this client's own POST responses, which silently dropped inbound
+     * messages: a prompt sent by the app at seq 1 was skipped whenever the CLI's
+     * own startup event took seq 2 and its POST returned first, because the
+     * cursor then sat at 2 and both the socket's contiguity check and the next
+     * fetch's after_seq looked straight past seq 1.
+     */
+    private lastReceivedSeq = 0;
     private pendingOutbox: Array<{ content: string; localId: string }> = [];
     private readonly sendSync: InvalidateSync;
     private readonly receiveSync: InvalidateSync;
@@ -312,7 +325,7 @@ export class ApiSessionClient extends EventEmitter {
 
                 if (data.body.t === 'new-message') {
                     const messageSeq = data.body.message?.seq;
-                    if (typeof messageSeq !== 'number' || messageSeq !== this.lastSeq + 1 || data.body.message.content.t !== 'encrypted') {
+                    if (typeof messageSeq !== 'number' || messageSeq !== this.lastReceivedSeq + 1 || data.body.message.content.t !== 'encrypted') {
                         this.receiveSync.invalidate();
                         return;
                     }
@@ -326,7 +339,7 @@ export class ApiSessionClient extends EventEmitter {
                             : 'unknown',
                     });
                     this.routeIncomingMessage(body);
-                    this.lastSeq = messageSeq;
+                    this.lastReceivedSeq = messageSeq;
                 } else if (data.body.t === 'update-session') {
                     if (data.body.metadata && data.body.metadata.version > this.metadataVersion) {
                         this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(data.body.metadata.value));
@@ -579,14 +592,14 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private async fetchMessages() {
-        // On reconnect, skip processing existing messages — just advance lastSeq
+        // On reconnect, skip processing existing messages — just advance the cursor
         const skipRouting = this.skipInitialMessages;
         if (skipRouting) {
             this.skipInitialMessages = false;
-            logger.debug('[API] Reconnect mode: skipping existing messages, advancing lastSeq');
+            logger.debug('[API] Reconnect mode: skipping existing messages, advancing lastReceivedSeq');
         }
 
-        let afterSeq = this.lastSeq;
+        let afterSeq = this.lastReceivedSeq;
         while (true) {
             const response = await axios.get<V3GetSessionMessagesResponse>(
                 `${configuration.serverUrl}/v3/sessions/${encodeURIComponent(this.sessionId)}/messages`,
@@ -626,7 +639,7 @@ export class ApiSessionClient extends EventEmitter {
                 }
             }
 
-            this.lastSeq = Math.max(this.lastSeq, maxSeq);
+            this.lastReceivedSeq = Math.max(this.lastReceivedSeq, maxSeq);
             const hasMore = !!response.data.hasMore;
             if (hasMore && maxSeq === afterSeq) {
                 logger.debug('[API] fetchMessages pagination stalled, stopping to avoid infinite loop', {
@@ -663,11 +676,12 @@ export class ApiSessionClient extends EventEmitter {
                 }
             );
 
-            const messages = Array.isArray(response.data.messages) ? response.data.messages : [];
-            const maxSeq = messages.reduce((acc, message) => (
-                message.seq > acc ? message.seq : acc
-            ), this.lastSeq);
-            this.lastSeq = maxSeq;
+            // Deliberately does not touch the receive cursor. The seqs this
+            // response reports are ours, and moving the cursor onto them steps
+            // over anything the other side wrote in between — which is exactly
+            // how a new session lost the first prompt. Our own messages come
+            // back over the socket like everyone else's and move the cursor
+            // then, once they have actually been seen.
             this.pendingOutbox.splice(batchStart, batch.length);
         }
     }
@@ -690,6 +704,24 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private applyClaudeSessionMessageSideEffects(body: RawJSONLines) {
+        // Capture the first real user prompt so a fallback title can be derived
+        // from it if the agent never calls change_title. Skip synthetic/side
+        // content: isMeta messages are system-injected context, isSidechain
+        // messages are subagent-internal, and non-string content is a tool
+        // result or content-block array, not something a human typed.
+        if (
+            body.type === 'user' &&
+            !body.isMeta &&
+            !body.isSidechain &&
+            this.firstUserMessageText === null &&
+            typeof body.message?.content === 'string'
+        ) {
+            const trimmed = body.message.content.trim();
+            if (trimmed.length > 0) {
+                this.firstUserMessageText = trimmed;
+            }
+        }
+
         // Track usage from assistant messages
         if (body.type === 'assistant' && body.message?.usage) {
             try {
@@ -697,6 +729,27 @@ export class ApiSessionClient extends EventEmitter {
             } catch (error) {
                 logger.debug('[SOCKET] Failed to send usage data:', error);
             }
+        }
+
+        if (
+            body.type === 'assistant' &&
+            !this.fallbackTitleApplied &&
+            !this.metadata?.summary &&
+            this.firstUserMessageText
+        ) {
+            this.fallbackTitleApplied = true;
+            const FALLBACK_TITLE_MAX_LENGTH = 60;
+            const text = this.firstUserMessageText;
+            const fallbackTitle = text.length > FALLBACK_TITLE_MAX_LENGTH
+                ? `${text.slice(0, FALLBACK_TITLE_MAX_LENGTH).trimEnd()}...`
+                : text;
+            this.updateMetadata((metadata) => ({
+                ...metadata,
+                summary: {
+                    text: fallbackTitle,
+                    updatedAt: Date.now()
+                }
+            }));
         }
 
         // Update metadata with summary if this is a summary message

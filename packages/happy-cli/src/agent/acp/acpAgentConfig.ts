@@ -6,6 +6,14 @@ export type AcpAgentConfig = {
 export const KNOWN_ACP_AGENTS: Record<string, AcpAgentConfig> = {
   gemini: { command: 'gemini', args: ['--experimental-acp'] },
   opencode: { command: 'opencode', args: ['acp'] },
+  openhands: { command: 'openhands', args: ['acp'] },
+  // OpenHands has one CLI binary; the daemon's two launch presets differ
+  // only in which LLM env vars they set, not in command or args. Keeping
+  // them as distinct ACP agent names (rather than both resolving through
+  // the generic `openhands` entry above) is what lets the resulting Happy
+  // session record which preset actually ran it.
+  openhands_local: { command: 'openhands', args: ['acp'] },
+  openhands_deepinfra: { command: 'openhands', args: ['acp'] },
 };
 
 export type ResolvedAcpAgentConfig = {

@@ -1,20 +1,20 @@
 import React, { useCallback } from 'react';
-import { View, Text, Animated, Platform } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, Platform } from 'react-native';
+import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
+import { Ionicons, Octicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
 import { ItemList } from '@/components/ItemList';
-import { Avatar } from '@/components/Avatar';
-import { useSession, useIsDataReady } from '@/sync/storage';
-import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId, getResumeCommand } from '@/utils/sessionUtils';
+import { GitLineChanges } from '@/components/GitLineChanges';
+import { useSession, useIsDataReady, useSessionGitStatus, useSessionGitStatusFiles } from '@/sync/storage';
+import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getResumeCommand } from '@/utils/sessionUtils';
+import { resolveSessionGitPresentation } from '@/utils/sessionGitPresentation';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
 import { sessionArchive, sessionKill, sessionDelete } from '@/sync/ops';
 import { maybeCleanupWorktree } from '@/hooks/useWorktreeCleanup';
 import { useUnistyles } from 'react-native-unistyles';
-import { layout } from '@/components/layout';
 import { t } from '@/text';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/versionUtils';
 import { CodeView } from '@/components/CodeView';
@@ -23,47 +23,9 @@ import { useHappyAction } from '@/hooks/useHappyAction';
 import { useSessionQuickActions } from '@/hooks/useSessionQuickActions';
 import { copySessionMetadataToClipboard, copySessionMetadataAndLogsToClipboard } from '@/utils/copySessionMetadataToClipboard';
 import { HappyError } from '@/utils/errors';
-import { MobileGlassSurface } from '@/components/MobileGlass';
 import { getRigIdentity, isRigMetadata } from '@/sync/rig';
-
-// Animated status dot component
-function StatusDot({ color, isPulsing, size = 8 }: { color: string; isPulsing?: boolean; size?: number }) {
-    const pulseAnim = React.useRef(new Animated.Value(1)).current;
-
-    React.useEffect(() => {
-        if (isPulsing) {
-            Animated.loop(
-                Animated.sequence([
-                    Animated.timing(pulseAnim, {
-                        toValue: 0.3,
-                        duration: 1000,
-                        useNativeDriver: true,
-                    }),
-                    Animated.timing(pulseAnim, {
-                        toValue: 1,
-                        duration: 1000,
-                        useNativeDriver: true,
-                    }),
-                ])
-            ).start();
-        } else {
-            pulseAnim.setValue(1);
-        }
-    }, [isPulsing, pulseAnim]);
-
-    return (
-        <Animated.View
-            style={{
-                width: size,
-                height: size,
-                borderRadius: size / 2,
-                backgroundColor: color,
-                opacity: pulseAnim,
-                marginRight: 4,
-            }}
-        />
-    );
-}
+import { HARNESS_NAMES } from '@/utils/harnessCatalog';
+import { MOBILE_GLASS_HEADER_HEIGHT } from '@/components/navigation/headerMetrics';
 
 function formatSandboxMetadata(sandbox: unknown, homeDir?: string): string {
     if (sandbox === null || sandbox === undefined) {
@@ -129,7 +91,6 @@ function SessionInfoContent({ session }: { session: Session }) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const devModeEnabled = __DEV__;
-    const sessionName = getSessionName(session);
     const sessionStatus = useSessionStatus(session);
     const {
         canShowResume,
@@ -140,6 +101,13 @@ function SessionInfoContent({ session }: { session: Session }) {
         resumeSession,
         resumeSessionSubtitle,
     } = useSessionQuickActions(session);
+
+    const gitStatus = useSessionGitStatus(session.id);
+    const gitStatusFiles = useSessionGitStatusFiles(session.id);
+    const gitPresentation = React.useMemo(
+        () => resolveSessionGitPresentation(session.metadata, gitStatus, gitStatusFiles),
+        [session.metadata, gitStatus, gitStatusFiles],
+    );
 
     // Check if CLI version is outdated
     const isCliOutdated = session.metadata?.version && !isVersionSupported(session.metadata.version, MINIMUM_CLI_VERSION);
@@ -165,11 +133,16 @@ function SessionInfoContent({ session }: { session: Session }) {
     // Use HappyAction for archiving - it handles errors automatically
     const [archivingSession, performArchive] = useHappyAction(async () => {
         // Prompt for worktree cleanup before killing (needs an active machine connection)
-        await maybeCleanupWorktree(session.id, session.metadata?.path, session.metadata?.machineId);
+        if (!session.metadata?.bot) {
+            await maybeCleanupWorktree(session.id, session.metadata?.path, session.metadata?.machineId);
+        }
 
         // Try to kill the CLI process; if it's already dead, force-archive via server
         const killResult = await sessionKill(session.id);
         if (!killResult.success) {
+            if (session.metadata?.bot) {
+                throw new HappyError(killResult.message || 'Connect to the bot’s machine to archive it.', false);
+            }
             await sessionArchive(session.id);
         }
         // Success - navigate back
@@ -183,6 +156,7 @@ function SessionInfoContent({ session }: { session: Session }) {
 
     // Use HappyAction for deletion - kills session first if needed, then deletes
     const [deletingSession, performDelete] = useHappyAction(async () => {
+        if (session.metadata?.bot) throw new HappyError('Archive the bot instead of deleting its conversation.', false);
         // Prompt for worktree cleanup before killing (needs an active machine connection)
         await maybeCleanupWorktree(session.id, session.metadata?.path, session.metadata?.machineId);
 
@@ -232,57 +206,83 @@ function SessionInfoContent({ session }: { session: Session }) {
 
     return (
         <>
-            <ItemList>
-                {/* Session Header */}
-                <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
-                    <MobileGlassSurface
-                        enabled={Platform.OS !== 'web'}
-                        intensity={68}
-                        style={{
-                            alignItems: 'center',
-                            paddingVertical: 24,
-                            backgroundColor: Platform.select({
-                                web: theme.colors.surface,
-                                android: theme.colors.glass.backgroundStrong,
-                                default: 'transparent',
-                            }),
-                            marginBottom: 8,
-                            borderRadius: Platform.select({ web: 12, default: 22 }),
-                            marginHorizontal: 16,
-                            marginTop: 16,
-                            overflow: 'hidden',
-                            borderWidth: Platform.OS === 'web' ? 0 : 0.5,
-                            borderColor: theme.colors.glass.border,
-                            shadowColor: theme.colors.glass.shadow,
-                            shadowOffset: { width: 0, height: 10 },
-                            shadowOpacity: Platform.OS === 'web' ? 0 : 1,
-                            shadowRadius: 24,
-                        }}
-                    >
-                        <Avatar id={getSessionAvatarId(session)} size={80} monochrome={!sessionStatus.isConnected} flavor={session.metadata?.flavor} clientId={session.metadata?.client?.id} />
-                        <Text style={{
-                            fontSize: 20,
-                            fontWeight: '600',
-                            marginTop: 12,
-                            textAlign: 'center',
-                            color: theme.colors.text,
-                            ...Typography.default('semiBold')
-                        }}>
-                            {sessionName}
-                        </Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                            <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} size={10} />
-                            <Text style={{
-                                fontSize: 15,
-                                color: sessionStatus.statusColor,
-                                fontWeight: '500',
-                                ...Typography.default()
-                            }}>
-                                {sessionStatus.statusText}
-                            </Text>
-                        </View>
-                    </MobileGlassSurface>
-                </View>
+            <ItemList
+                containerStyle={{
+                    paddingTop: Platform.OS === 'ios' ? MOBILE_GLASS_HEADER_HEIGHT : 0,
+                }}
+            >
+                {/* Quick Actions — changes are the first entry, above metadata. */}
+                <ItemGroup title={t('sessionInfo.quickActions')}>
+                    <Item
+                        title={t('files.changes')}
+                        icon={<Octicons name="file-diff" size={26} color="#007AFF" />}
+                        rightElement={gitPresentation.changedFileCount !== null || gitPresentation.changes ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                {gitPresentation.changedFileCount !== null && (
+                                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                                        {t('files.changedFiles', { count: gitPresentation.changedFileCount })}
+                                    </Text>
+                                )}
+                                <GitLineChanges changes={gitPresentation.changes} />
+                                <Ionicons name="chevron-forward" size={17} color={theme.colors.groupped.chevron} />
+                            </View>
+                        ) : undefined}
+                        onPress={() => router.push(`/session/${session.id}/changes`)}
+                    />
+                    {session.metadata?.machineId && (
+                        <Item
+                            title={t('sessionInfo.viewMachine')}
+                            subtitle={t('sessionInfo.viewMachineSubtitle')}
+                            icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
+                            onPress={() => router.push(`/machine/${session.metadata?.machineId}`)}
+                        />
+                    )}
+                    {canShowResume && (
+                        <Item
+                            title={t('sessionInfo.resumeSession')}
+                            subtitle={resumeSessionSubtitle}
+                            icon={<Ionicons name="play-circle-outline" size={29} color="#007AFF" />}
+                            onPress={resumeSession}
+                        />
+                    )}
+                    {canFork && (
+                        <Item
+                            title={t('session.forkAction')}
+                            subtitle={t('session.forkSubtitle')}
+                            icon={<Ionicons name="git-branch-outline" size={29} color="#007AFF" />}
+                            onPress={forkSession}
+                            loading={forking}
+                        />
+                    )}
+                    {canFork && (
+                        <Item
+                            title={t('session.duplicateAction')}
+                            subtitle={t('session.duplicateSubtitle')}
+                            icon={<Ionicons name="time-outline" size={29} color="#007AFF" />}
+                            onPress={openDuplicateSheet}
+                        />
+                    )}
+                    {session.metadata?.parentSessionId && (
+                        <Item
+                            title={t('session.forkedFromLabel')}
+                            subtitle={t('session.forkedFromSubtitle')}
+                            icon={<Ionicons name="return-up-back-outline" size={29} color="#5856D6" />}
+                            onPress={() => router.push(`/session/${session.metadata!.parentSessionId}`)}
+                        />
+                    )}
+                    <Item
+                        title={t('sessionInfo.archiveSession')}
+                        subtitle={t('sessionInfo.archiveSessionSubtitle')}
+                        icon={<Ionicons name="archive-outline" size={29} color="#FF3B30" />}
+                        onPress={handleArchiveSession}
+                    />
+                    {!session.metadata?.bot && <Item
+                        title={t('sessionInfo.deleteSession')}
+                        subtitle={t('sessionInfo.deleteSessionSubtitle')}
+                        icon={<Ionicons name="trash-outline" size={29} color="#FF3B30" />}
+                        onPress={handleDeleteSession}
+                    />}
+                </ItemGroup>
 
                 {/* CLI Version Warning */}
                 {isCliOutdated && (
@@ -371,63 +371,6 @@ function SessionInfoContent({ session }: { session: Session }) {
                     />
                 </ItemGroup>
 
-                {/* Quick Actions */}
-                <ItemGroup title={t('sessionInfo.quickActions')}>
-                    {session.metadata?.machineId && (
-                        <Item
-                            title={t('sessionInfo.viewMachine')}
-                            subtitle={t('sessionInfo.viewMachineSubtitle')}
-                            icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
-                            onPress={() => router.push(`/machine/${session.metadata?.machineId}`)}
-                        />
-                    )}
-                    {canShowResume && (
-                        <Item
-                            title={t('sessionInfo.resumeSession')}
-                            subtitle={resumeSessionSubtitle}
-                            icon={<Ionicons name="play-circle-outline" size={29} color="#007AFF" />}
-                            onPress={resumeSession}
-                        />
-                    )}
-                    {canFork && (
-                        <Item
-                            title={t('session.forkAction')}
-                            subtitle={t('session.forkSubtitle')}
-                            icon={<Ionicons name="git-branch-outline" size={29} color="#007AFF" />}
-                            onPress={forkSession}
-                            loading={forking}
-                        />
-                    )}
-                    {canFork && (
-                        <Item
-                            title={t('session.duplicateAction')}
-                            subtitle={t('session.duplicateSubtitle')}
-                            icon={<Ionicons name="time-outline" size={29} color="#007AFF" />}
-                            onPress={openDuplicateSheet}
-                        />
-                    )}
-                    {session.metadata?.parentSessionId && (
-                        <Item
-                            title={t('session.forkedFromLabel')}
-                            subtitle={t('session.forkedFromSubtitle')}
-                            icon={<Ionicons name="return-up-back-outline" size={29} color="#5856D6" />}
-                            onPress={() => router.push(`/session/${session.metadata!.parentSessionId}`)}
-                        />
-                    )}
-                    <Item
-                        title={t('sessionInfo.archiveSession')}
-                        subtitle={t('sessionInfo.archiveSessionSubtitle')}
-                        icon={<Ionicons name="archive-outline" size={29} color="#FF3B30" />}
-                        onPress={handleArchiveSession}
-                    />
-                    <Item
-                        title={t('sessionInfo.deleteSession')}
-                        subtitle={t('sessionInfo.deleteSessionSubtitle')}
-                        icon={<Ionicons name="trash-outline" size={29} color="#FF3B30" />}
-                        onPress={handleDeleteSession}
-                    />
-                </ItemGroup>
-
                 {/* Metadata */}
                 {session.metadata && (
                     <ItemGroup title={t('sessionInfo.metadata')}>
@@ -478,6 +421,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                                 if (flavor === 'gpt' || flavor === 'openai') return 'Codex';
                                 if (flavor === 'gemini') return 'Gemini';
                                 if (flavor === 'openclaw') return 'OpenClaw';
+                                if (flavor === 'openhands_local' || flavor === 'openhands_deepinfra') return HARNESS_NAMES[flavor];
                                 return flavor;
                             })()}
                             icon={<Ionicons name="sparkles-outline" size={29} color="#5856D6" />}
@@ -670,30 +614,47 @@ export default React.memo(() => {
     const { id } = useLocalSearchParams<{ id: string }>();
     const session = useSession(id);
     const isDataReady = useIsDataReady();
+    const screenTitle = session
+        ? getSessionName(session)
+        : isDataReady
+            ? t('errors.sessionDeleted')
+            : '';
+    const screenOptions = <Stack.Screen options={{ headerTitle: screenTitle, headerTitleAlign: 'left' }} />;
 
     // Handle three states: loading, deleted, and exists
     if (!isDataReady) {
         // Still loading data
         return (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="hourglass-outline" size={48} color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 17, marginTop: 16, ...Typography.default('semiBold') }}>{t('common.loading')}</Text>
-            </View>
+            <>
+                {screenOptions}
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.groupped.background }}>
+                    <Ionicons name="hourglass-outline" size={48} color={theme.colors.textSecondary} />
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 17, marginTop: 16, ...Typography.default('semiBold') }}>{t('common.loading')}</Text>
+                </View>
+            </>
         );
     }
 
     if (!session) {
         // Session has been deleted or doesn't exist
         return (
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="trash-outline" size={48} color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.text, fontSize: 20, marginTop: 16, ...Typography.default('semiBold') }}>{t('errors.sessionDeleted')}</Text>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32, ...Typography.default() }}>{t('errors.sessionDeletedDescription')}</Text>
-            </View>
+            <>
+                {screenOptions}
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.groupped.background }}>
+                    <Ionicons name="trash-outline" size={48} color={theme.colors.textSecondary} />
+                    <Text style={{ color: theme.colors.text, fontSize: 20, marginTop: 16, ...Typography.default('semiBold') }}>{t('errors.sessionDeleted')}</Text>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32, ...Typography.default() }}>{t('errors.sessionDeletedDescription')}</Text>
+                </View>
+            </>
         );
     }
 
-    return <SessionInfoContent session={session} />;
+    return (
+        <>
+            {screenOptions}
+            <SessionInfoContent session={session} />
+        </>
+    );
 });
 
 function CopyableItem({ title, subtitle, icon, copyText }: { title: string; subtitle: string; icon: React.ReactNode; copyText: string }) {

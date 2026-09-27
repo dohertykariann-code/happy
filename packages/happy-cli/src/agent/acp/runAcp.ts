@@ -436,12 +436,15 @@ type PendingTurn = {
   timeout: NodeJS.Timeout;
 };
 
-function resolveSessionFlavor(agentName: string): 'gemini' | 'opencode' | 'acp' {
+function resolveSessionFlavor(agentName: string): 'gemini' | 'opencode' | 'openhands_local' | 'openhands_deepinfra' | 'acp' {
   if (agentName === 'gemini') {
     return 'gemini';
   }
   if (agentName === 'opencode') {
     return 'opencode';
+  }
+  if (agentName === 'openhands_local' || agentName === 'openhands_deepinfra') {
+    return agentName;
   }
   return 'acp';
 }
@@ -469,11 +472,22 @@ export async function runAcp(opts: {
     metadata: initialMachineMetadata,
   });
 
+  // Lineage from the daemon's spawn RPC (set by app-side fork / duplicate /
+  // second-opinion handoff). Other backends (runClaude.ts, runCodex.ts)
+  // already read these; the ACP runner never did, so every ACP-backed
+  // session (gemini, opencode, OpenHands) silently lost its parent link.
+  const forkedFromSessionId = process.env.HAPPY_FORKED_FROM_SESSION_ID;
+  const forkedFromMessageId = process.env.HAPPY_FORKED_FROM_MESSAGE_ID;
+  const isSideChat = process.env.HAPPY_SIDE_CHAT === '1';
+
   const { state, metadata } = createSessionMetadata({
     flavor: resolveSessionFlavor(opts.agentName),
     machineId: settings.machineId,
     startedBy: opts.startedBy,
     sandbox: settings.sandboxConfig,
+    ...(forkedFromSessionId ? { parentSessionId: forkedFromSessionId } : {}),
+    ...(forkedFromMessageId ? { forkedFromMessageId } : {}),
+    ...(isSideChat ? { isSideChat: true } : {}),
   });
   const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
   if (response) {
@@ -552,6 +566,7 @@ export async function runAcp(opts: {
   let shouldExit = false;
   let abortController = new AbortController();
   let pendingTurn: PendingTurn | null = null;
+  let errorReportedForCurrentTurn = false;
 
   const clearPendingTurn = (error?: Error) => {
     if (!pendingTurn) {
@@ -825,7 +840,17 @@ export async function runAcp(opts: {
       logAcp(frontendMessage.kind, frontendMessage.text);
     }
 
-    sendEnvelopes(sessionManager.mapMessage(msg));
+    const envelopes = sessionManager.mapMessage(msg);
+    sendEnvelopes(envelopes);
+    if (msg.type === 'status' && msg.status === 'error' && envelopes.length === 0) {
+      session.sendSessionEvent({
+        type: 'message',
+        message: `${opts.agentName} error: ${msg.detail?.trim() || 'The agent stopped because of an unknown error.'}`,
+      });
+    }
+    if (msg.type === 'status' && msg.status === 'error') {
+      errorReportedForCurrentTurn = true;
+    }
   };
 
   backend.onMessage(onBackendMessage);
@@ -911,6 +936,7 @@ export async function runAcp(opts: {
       }
 
       logAcp('incoming', `Incoming prompt: ${formatUnknownForConsole(batch.message, ACP_EVENT_PREVIEW_CHARS)}`);
+      errorReportedForCurrentTurn = false;
       sendEnvelopes(sessionManager.startTurn());
       const turnEnded = waitForTurnEnd();
       try {
@@ -928,10 +954,19 @@ export async function runAcp(opts: {
           logAcp('muted', `Outgoing prompt completion from ${opts.agentName}`);
         }
       } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        if (!errorReportedForCurrentTurn) {
+          session.sendSessionEvent({
+            type: 'message',
+            message: `${opts.agentName} error: ${detail}`,
+          });
+          errorReportedForCurrentTurn = true;
+        }
         sendEnvelopes(sessionManager.endTurn('failed'));
         session.sendSessionEvent({ type: 'ready' });
-        logAcp('error', `Prompt error from ${opts.agentName}: ${error instanceof Error ? error.message : String(error)}`);
+        logAcp('error', `Prompt error from ${opts.agentName}: ${detail}`);
         clearPendingTurn(error instanceof Error ? error : new Error(String(error)));
+        await turnEnded.catch(() => {});
         throw error;
       }
     }

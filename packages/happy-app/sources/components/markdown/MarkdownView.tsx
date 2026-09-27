@@ -27,6 +27,11 @@ export const MarkdownView = React.memo((props: {
     markdown: string;
     onOptionPress?: (option: Option) => void;
     sessionId?: string;
+    /**
+     * The parent owns long-press copy (see LongPressCopyable). Suppresses native
+     * selection and the built-in copy gesture so only one of them fires.
+     */
+    externalCopyHandler?: boolean;
 }) => {
     const blocks = React.useMemo(() => parseMarkdown(props.markdown), [props.markdown]);
     
@@ -36,7 +41,7 @@ export const MarkdownView = React.memo((props: {
     // will be handled by a wrapper Pressable. If we don't disable the selectable property, then you will see
     // the native copy modal come up at the same time as the long press handler is fired.
     const markdownCopyV2 = useLocalSetting('markdownCopyV2');
-    const selectable = Platform.OS === 'web' || !markdownCopyV2;
+    const selectable = Platform.OS === 'web' || !(markdownCopyV2 || props.externalCopyHandler);
     const router = useRouter();
 
     const handleLinkPress = React.useCallback((url: string) => {
@@ -88,7 +93,7 @@ export const MarkdownView = React.memo((props: {
         );
     }
 
-    if (!markdownCopyV2) {
+    if (props.externalCopyHandler || !markdownCopyV2) {
         return renderContent();
     }
     
@@ -193,7 +198,7 @@ function RenderCodeBlock(props: { content: string, language: string | null, firs
                 />
             </HorizontalScrollView>
             <View
-                style={[style.copyButtonWrapper, isHovered && style.copyButtonWrapperVisible]}
+                style={[style.copyButtonWrapper, (isHovered || Platform.OS !== 'web') && style.copyButtonWrapperVisible]}
                 {...(Platform.OS === 'web' ? ({ className: 'copy-button-wrapper' } as any) : {})}
             >
                 <Pressable
@@ -237,16 +242,16 @@ function RenderOptionsBlock(props: {
             {props.items.map((item, index) => {
                 if (props.onOptionPress) {
                     return (
-                        <Pressable 
-                            key={index} 
+                        <Pressable
+                            key={index}
                             style={({ pressed }) => [
                                 style.optionPressable,
-                                style.optionItem,
-                                pressed && style.optionItemPressed
+                                style.optionButton,
+                                pressed && style.optionButtonPressed
                             ]}
                             onPress={() => props.onOptionPress?.({ title: item })}
                         >
-                            <Text selectable={props.selectable} style={style.optionText}>{item}</Text>
+                            <Text selectable={props.selectable} style={style.optionButtonText}>{item}</Text>
                         </Pressable>
                     );
                 } else {
@@ -611,6 +616,24 @@ const style = StyleSheet.create((theme) => ({
         opacity: Platform.select({ web: 0.7, default: 1 }),
     },
     optionText: {
+        ...Typography.default(),
+        fontSize: 16,
+        lineHeight: 24,
+        color: theme.colors.text,
+    },
+    // Tapping an option sends it as your message. Full-width rows in the
+    // composer send button's resting grey — flat, no border.
+    optionButton: {
+        backgroundColor: theme.colors.surfaceHighest,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        overflow: 'hidden',
+    },
+    optionButtonPressed: {
+        opacity: 0.7,
+    },
+    optionButtonText: {
         ...Typography.default(),
         fontSize: 16,
         lineHeight: 24,

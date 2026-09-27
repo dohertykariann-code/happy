@@ -3,6 +3,7 @@ import type { Machine } from './storageTypes';
 import { isRigMachine } from './rigSessionCreation';
 import { pairedMachineIds } from './agentSessionPlaces';
 import { isMachineOnline } from '@/utils/machineUtils';
+import { isHarnessAvailable } from '@/utils/harnessCatalog';
 import { NEW_SESSION_AGENT_ORDER, resolveMachineAgent } from '@/utils/newSessionAgentSelection';
 
 /**
@@ -141,11 +142,34 @@ export function machineChoiceAgentAvailable(
     agent: NewSessionAgentType,
 ): boolean {
     if (!choice) return false;
-    if (agent === 'rig') return choice.rigMachine !== null;
+    if (agent === 'rig') {
+        return isHarnessAvailable({
+            availability: choice.happyMachine?.metadata?.cliAvailability,
+            happyAgentAvailable: choice.rigMachine !== null,
+            key: agent,
+        });
+    }
     const happy = choice.happyMachine;
     if (!happy) return false;
-    const availability = happy.metadata?.cliAvailability;
-    return !availability || availability[agent] === true;
+    return isHarnessAvailable({
+        availability: happy.metadata?.cliAvailability,
+        happyAgentAvailable: choice.rigMachine !== null,
+        key: agent,
+    });
+}
+
+/**
+ * Whether the Home picker should contain this harness at all.
+ *
+ * Common harnesses stay visible but disabled when unavailable. Antigravity,
+ * OpenHands, and Happy Agent stay absent until this computer reports them available.
+ */
+export function machineChoiceAgentVisible(
+    choice: MachineChoice | null,
+    agent: NewSessionAgentType,
+): boolean {
+    return (agent !== 'agy' && agent !== 'rig' && agent !== 'openhands_local' && agent !== 'openhands_deepinfra')
+        || machineChoiceAgentAvailable(choice, agent);
 }
 
 /**
@@ -161,8 +185,8 @@ export function resolveChoiceAgent(
 ): NewSessionAgentType {
     if (!choice) return agent;
     if (machineChoiceAgentAvailable(choice, agent)) {
-        // Happy CLI machines that predate capability reporting say nothing, and are taken at their
-        // word rather than second-guessed.
+        // Older Happy CLI machines are trusted for common harnesses. Antigravity
+        // never reaches this branch without an explicit installation report.
         return agent === 'rig' || !choice.happyMachine?.metadata?.cliAvailability
             ? agent
             : resolveMachineAgent(agent, choice.happyMachine.metadata.cliAvailability);
@@ -183,4 +207,31 @@ export function resolveAgentMachine(
 ): Machine | null {
     if (!choice) return null;
     return agent === 'rig' ? choice.rigMachine : choice.happyMachine;
+}
+
+/**
+ * The daemon that can create a git worktree for a new session.
+ *
+ * Happy Agent may publish `worktrees: false` while the Happy CLI daemon paired
+ * with it still exposes the machine-level git RPC. In that case the CLI daemon
+ * creates the checkout and Happy Agent starts the session inside the resulting
+ * directory. Other harnesses keep respecting their own worktree capability.
+ */
+export function resolveWorktreeCreationMachine(
+    choice: MachineChoice | null,
+    agent: NewSessionAgentType,
+    agentSupportsWorktrees: boolean,
+): Machine | null {
+    if (!choice) return null;
+
+    if (agent === 'rig') {
+        const happyMachine = choice.happyMachine;
+        if (happyMachine && isMachineOnline(happyMachine)) {
+            return happyMachine;
+        }
+    }
+
+    if (!agentSupportsWorktrees) return null;
+    const agentMachine = resolveAgentMachine(choice, agent);
+    return agentMachine && isMachineOnline(agentMachine) ? agentMachine : null;
 }

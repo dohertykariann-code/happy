@@ -12,6 +12,8 @@ export const HARNESS_NAMES: Record<NewSessionAgentType, string> = {
     agy: 'Antigravity',
     gemini: 'Gemini',
     openclaw: 'OpenClaw',
+    openhands_local: 'OpenHands (Local)',
+    openhands_deepinfra: 'OpenHands (DeepInfra)',
 };
 
 /**
@@ -32,15 +34,17 @@ export const RETIRED_HARNESSES: ReadonlySet<NewSessionAgentType> = new Set([
 export const HARNESS_ORDER: readonly NewSessionAgentType[] = [
     'claude',
     'codex',
-    'rig',
     'agy',
+    'rig',
+    'openhands_local',
+    'openhands_deepinfra',
 ];
 
 export function isRetiredHarness(key: NewSessionAgentType | string): boolean {
     return RETIRED_HARNESSES.has(key as NewSessionAgentType);
 }
 
-export type HarnessAvailability = Partial<Record<NewSessionAgentType, boolean>>;
+export type HarnessAvailability = Partial<Record<NewSessionAgentType | 'openhands', boolean>>;
 
 export type HarnessOption = {
     key: NewSessionAgentType;
@@ -52,15 +56,47 @@ export function getHarnessName(key: NewSessionAgentType | string): string {
 }
 
 /**
+ * The key an availability report actually uses for this harness. OpenHands
+ * has one CLI binary, so both provider presets share its single report under
+ * the `openhands` key rather than their own `openhands_local`/`openhands_deepinfra`
+ * keys. Any code indexing into an availability report by harness key must go
+ * through this, or the two OpenHands presets read as never-available even
+ * when the machine reports `openhands: true`.
+ */
+export function availabilityKeyFor(key: NewSessionAgentType): NewSessionAgentType | 'openhands' {
+    return key === 'openhands_local' || key === 'openhands_deepinfra' ? 'openhands' : key;
+}
+
+/** Whether this machine has given the app enough evidence to offer a harness. */
+export function isHarnessAvailable({
+    availability,
+    happyAgentAvailable,
+    key,
+}: {
+    availability?: HarnessAvailability | null;
+    happyAgentAvailable: boolean;
+    key: NewSessionAgentType;
+}): boolean {
+    if (key === 'rig') return happyAgentAvailable;
+    // Antigravity and OpenHands are niche enough that an old or incomplete
+    // capability report must not advertise them speculatively. OpenHands has
+    // one CLI binary, so both provider presets share its single report.
+    if (key === 'agy') return availability?.agy === true;
+    if (key === 'openhands_local' || key === 'openhands_deepinfra') return availability?.openhands === true;
+    return !availability || availability[key] === true;
+}
+
+/**
  * The harnesses a machine actually has set up, in pick order.
  *
  * A harness with no CLI on the machine is left out rather than shown disabled:
  * a greyed-out row reads as something you can turn on from here, and you
  * cannot. Two things keep the list from ever being empty — the current
- * selection is always included, and a machine that reports no capabilities at
- * all (an older daemon, or none selected yet) falls back to the whole catalog.
- * A retired harness is exempt from the first of those: keeping it listed is
- * what would strand someone on it.
+ * selection is usually included, and a machine that reports no capabilities at
+ * all (an older daemon, or none selected yet) falls back to the familiar
+ * catalog. Antigravity is the exception to both fallbacks: it is only listed
+ * after an explicit installation report. A retired harness is also exempt from
+ * the first rule, because keeping it listed would strand someone on it.
  */
 export function listAvailableHarnesses({
     availability,
@@ -71,13 +107,12 @@ export function listAvailableHarnesses({
     happyAgentAvailable: boolean;
     selected?: NewSessionAgentType | null;
 }): HarnessOption[] {
-    const isAvailable = (key: NewSessionAgentType) => (
-        // Happy's own agent runs on a machine of its own, so its availability
-        // is resolved from the machine catalog rather than this machine's CLIs.
-        key === 'rig' ? happyAgentAvailable : !availability || availability[key] === true
-    );
-    const keys = HARNESS_ORDER.filter((key) => key === selected || isAvailable(key));
-    return (keys.length > 0 ? keys : HARNESS_ORDER).map((key) => ({
+    const keys = HARNESS_ORDER.filter((key) => (
+        (key === selected && key !== 'agy' && key !== 'openhands_local' && key !== 'openhands_deepinfra')
+        || isHarnessAvailable({ availability, happyAgentAvailable, key })
+    ));
+    const fallback = HARNESS_ORDER.filter((key) => key !== 'agy' && key !== 'openhands_local' && key !== 'openhands_deepinfra');
+    return (keys.length > 0 ? keys : fallback).map((key) => ({
         key,
         name: HARNESS_NAMES[key],
     }));

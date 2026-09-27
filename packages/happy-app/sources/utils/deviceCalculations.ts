@@ -36,18 +36,18 @@ export function determineDeviceType(params: {
     diagonalInches: number;
     platform: string;
     isPad?: boolean;
-    tabletThresholdInches?: number; // Default is 9 inches
+    tabletThresholdInches?: number; // Default is 8.6 inches
 }): 'phone' | 'tablet' {
-    const { diagonalInches, platform, isPad, tabletThresholdInches = 9 } = params;
+    const { diagonalInches, platform, isPad, tabletThresholdInches = 8.6 } = params;
     
-    // iOS-specific check: iPads with diagonal > 9" are tablets
+    // iOS-specific check: iPads with diagonal > threshold are tablets
     // This treats iPad Mini (7.9-8.3") as a phone
     if (platform === 'ios' && isPad) {
-        return diagonalInches > 9 ? 'tablet' : 'phone';
+        return diagonalInches > tabletThresholdInches ? 'tablet' : 'phone';
     }
     
     // General check: devices with diagonal >= threshold are tablets
-    // 9" threshold ensures foldables (typically 7-8") are treated as phones
+    // 8.6" threshold ensures foldables (typically 7-8") are treated as phones
     return diagonalInches >= tabletThresholdInches ? 'tablet' : 'phone';
 }
 
@@ -74,7 +74,7 @@ export function calculateHeaderHeight(params: {
     if (platform === 'android') {
         // For Android, use our custom device type detection
         if (deviceType === 'phone') {
-            return isLandscape ? 48 : 56; // Material Design: 48dp landscape, 56dp portrait
+            return isLandscape ? 48 : 64; // Material 3 small app bar
         }
         return 64; // Tablet: 64dp
     }

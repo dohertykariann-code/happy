@@ -80,4 +80,30 @@ describe('sessionEnvironment', () => {
         expect(command).not.toContain('unset HAPPY_FORK_CODEX_THREAD_ID');
         expect(command).toMatch(/node happy\.mjs codex$/);
     });
+
+    it('unsets an OpenHands-launch host secret a tmux server may already carry', () => {
+        // Simulates a tmux server whose default environment predates this
+        // launch and still has the daemon's host-only DeepInfra key, which
+        // `new-window -e` cannot remove because it only sets/overrides keys,
+        // it never unsets ones the launch omits.
+        const explicitEnv = { LLM_API_KEY: 'scoped-child-key' };
+        const keysToUnset = sessionEnvironmentKeysToUnset(explicitEnv, ['DEEPINFRA_API_KEY']);
+        const command = wrapTmuxCommandWithSessionEnvironmentSanitizer(
+            'node happy.mjs acp openhands',
+            explicitEnv,
+            ['DEEPINFRA_API_KEY'],
+        );
+
+        expect(keysToUnset).toContain('DEEPINFRA_API_KEY');
+        expect(command).toContain('unset ');
+        expect(command).toContain('DEEPINFRA_API_KEY');
+        expect(command).toMatch(/node happy\.mjs acp openhands$/);
+    });
+
+    it('keeps a launch-supplied DEEPINFRA_API_KEY instead of unsetting it', () => {
+        const explicitEnv = { DEEPINFRA_API_KEY: 'explicit-value' };
+        const keysToUnset = sessionEnvironmentKeysToUnset(explicitEnv, ['DEEPINFRA_API_KEY']);
+
+        expect(keysToUnset).not.toContain('DEEPINFRA_API_KEY');
+    });
 });

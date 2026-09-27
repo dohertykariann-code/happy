@@ -30,10 +30,17 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - New translation keys must be added to ALL language files
  */
 export const en: TranslationStructure = {
+    voiceStatusBar: {
+        tapToEnd: 'tap to end',
+        connecting: 'Connecting…',
+        error: 'Connection error',
+        active: 'Voice assistant active',
+    },
+
     tabs: {
         // Tab navigation labels
         inbox: 'Inbox',
-        sessions: 'Terminals',
+        sessions: 'Sessions',
         settings: 'Settings',
     },
 
@@ -178,13 +185,6 @@ export const en: TranslationStructure = {
         },
         chat: 'Chat',
         chatDescription: 'Customize chat message appearance',
-        sessionStatusBar: 'Session Status Info',
-        sessionStatusBarDescription: 'Choose where branch, model, effort, and context appear',
-        sessionStatusDisplayOptions: {
-            hidden: 'Hidden',
-            above: 'Above composer',
-            below: 'Below composer',
-        },
         usageLimitShowRemaining: 'Show Quota Remaining',
         usageLimitShowRemainingDescription: 'Count plan limits down from full instead of up from empty',
         userMessageBubbleColor: 'User Bubble Color',
@@ -201,40 +201,40 @@ export const en: TranslationStructure = {
         displayDescription: 'Control layout and spacing',
         compactToolCalls: 'Compact Tool Calls',
         compactToolCallsDescription: 'Show non-interactive tool calls as one-line rows; open a row for details',
-        inlineToolCalls: 'Inline Tool Calls',
-        inlineToolCallsDescription: 'Display tool calls directly in chat messages',
-        expandTodoLists: 'Expand Todo Lists',
-        expandTodoListsDescription: 'Show all todos instead of just changes',
-        showLineNumbersInDiffs: 'Show Line Numbers in Diffs',
-        showLineNumbersInDiffsDescription: 'Display line numbers in code diffs',
         showLineNumbersInToolViews: 'Show Line Numbers in Tool Views',
         showLineNumbersInToolViewsDescription: 'Display line numbers in tool view diffs',
-        wrapLinesInDiffs: 'Wrap Lines in Diffs',
-        wrapLinesInDiffsDescription: 'Wrap long lines instead of horizontal scrolling in diff views',
-        diffStyle: 'Diff View',
-        diffStyleDescription: 'Show diffs as a single column (unified) or side-by-side (split). Split view is web-only.',
-        diffStyleOptions: {
-            unified: 'Unified',
-            split: 'Split',
-        },
-        alwaysShowContextSize: 'Always Show Context Size',
-        alwaysShowContextSizeDescription: 'Display context usage even when not near limit',
-        avatarStyle: 'Avatar Style',
-        avatarStyleDescription: 'Choose session avatar appearance',
-        avatarOptions: {
-            pixelated: 'Pixelated',
-            gradient: 'Gradient',
-            brutalist: 'Brutalist',
-        },
+        alwaysShowContextSize: 'Show Usage Status',
+        alwaysShowContextSizeDescription: 'Context and plan usage below the input. Near-limit warnings always show.',
+        input: 'Input',
+        inputDescription: 'Configure the message input',
         showHarnessIconInSessionHeader: 'Show Harness Icon in Session Header',
         showHarnessIconInSessionHeaderDescription: 'Display the harness icon in the session header',
         showHarnessIconsInSessionList: 'Show Harness Icons in Session List',
         showHarnessIconsInSessionListDescription: 'Display harness icons on session-list avatars',
+        avatars: 'Avatars',
+        avatarsDescription: 'Choose how generated session avatars look',
+        avatarStyle: 'Avatar Style',
+        avatarStyleOptions: {
+            brutalist: 'Brutalist',
+            pixelated: 'Pixelated',
+            gradient: 'Gradient',
+        },
+        avatarMonochrome: 'Black & White Avatars',
+        avatarMonochromeDescription: 'Render avatars without color',
+    },
+
+    sessionsFilter: {
+        // Filter menu on the home sessions list header
+        title: 'Filter',
+        groupingTitle: 'Grouping',
+        flatList: 'Flat List',
+        groupByProject: 'Group by Project',
+        appearanceSettings: 'Appearance Settings',
     },
 
     settingsFeatures: {
         // Features settings screen
-        experiments: 'Experiments',
+        experiments: 'Experimental',
         experimentsDescription: 'Enable experimental features that are still in development. These features may be unstable or change without notice.',
         experimentalFeatures: 'Experimental Features',
         experimentalFeaturesEnabled: 'Experimental features enabled',
@@ -249,17 +249,8 @@ export const en: TranslationStructure = {
         commandPaletteDisabled: 'Quick command access disabled',
         markdownCopyV2: 'Markdown Copy v2',
         markdownCopyV2Subtitle: 'Long press opens copy modal',
-        hideInactiveSessions: 'Hide inactive sessions',
-        hideInactiveSessionsSubtitle: 'Show only active chats in your list',
         groupToolCalls: 'Group Tool Calls',
         groupToolCallsSubtitle: 'Collapse consecutive tool calls into one container',
-        privacy: 'Privacy',
-        privacyDescription: 'Completely disables all analytics and telemetry. No data will be sent to PostHog or any other tracking service.',
-        disableAnalytics: 'Disable Analytics',
-        analyticsDisabled: 'All tracking and telemetry disabled',
-        analyticsEnabled: 'Anonymous usage analytics active',
-        imageUpload: 'Image Upload',
-        imageUploadSubtitle: 'Attach images to messages for supported agents to analyze',
     },
 
     errors: {
@@ -373,7 +364,12 @@ export const en: TranslationStructure = {
         failedToConnectToServer: 'Failed to connect to server',
         currentlyUsingCustomServer: 'Currently using custom server',
         customServerUrlLabel: 'Custom Server URL',
-        advancedFeatureFooter: "This is an advanced feature. Only change the server if you know what you're doing. You will need to log out and log in again after changing servers."
+        advancedFeatureFooter: "This is an advanced feature. Only change the server if you know what you're doing. You will need to log out and log in again after changing servers.",
+        services: 'Services',
+        useCustomServerForVoice: 'Use Custom Server for Voice',
+        customServerVoiceEnabled: 'Voice credentials and usage use your custom server',
+        customServerVoiceDisabled: 'Voice uses Happy Cloud and your Happy subscription',
+        customServerVoiceFooter: 'When off, starting voice contacts Happy Cloud and ElevenLabs. Turn this on only if your custom server is configured for voice.',
     },
 
     sessionInfo: {
@@ -403,11 +399,12 @@ export const en: TranslationStructure = {
         quickActions: 'Quick Actions',
         viewMachine: 'View Machine',
         viewMachineSubtitle: 'View machine details and sessions',
+        viewChanges: 'View changes',
+        viewChangesSubtitle: 'Diffs for every uncommitted file',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
         resumeSessionMachineOffline: 'This machine is offline. Resume is only available while it is online.',
-        resumeSessionNeedsHappyAgent: 'Resume is unavailable on this machine. Run `happy-agent auth login` to enable it.',
         resumeSessionMissingMachine: 'This session is missing its machine metadata, so it cannot be resumed.',
         resumeSessionMissingBackendId: 'This session does not have a resumable Claude or Codex identifier.',
         resumeSessionUnexpectedDirectoryPrompt: 'Resume cannot create directories. Start the session manually from its original path.',
@@ -459,14 +456,6 @@ export const en: TranslationStructure = {
             clearGoal: 'Clear goal',
             stopGoal: 'Stop goal',
             editGoal: 'Edit goal',
-        },
-        sessionStatusBar: {
-            contextUsage: ({ used, total, percent }: { used: string; total: string; percent: number }) => `Context ${used} of ${total} tokens, ${percent}%`,
-            limitFiveHour: '5-hour limit',
-            limitSevenDay: '7-day limit',
-            limitResets: ({ time }: { time: string }) => `resets ${time}`,
-            limitAsOf: ({ age }: { age: string }) => `as of ${age} ago`,
-            limitRemaining: ({ percent }: { percent: number }) => `${percent}% left`,
         },
     },
 
@@ -534,7 +523,14 @@ export const en: TranslationStructure = {
             badgePlan: 'plan',
         },
         context: {
-            remaining: ({ percent }: { percent: number }) => `${percent}% left`,
+            detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} context`,
+            percentContext: ({ percent }: { percent: number }) => `${percent}% context`,
+            percentWeek: ({ percent }: { percent: number }) => `${percent}% week`,
+        },
+        usagePopup: {
+            session: 'Session',
+            week: 'Week',
+            resets: ({ time }: { time: string }) => `Resets ${time}`,
         },
         suggestion: {
             fileLabel: 'FILE',
@@ -582,15 +578,14 @@ export const en: TranslationStructure = {
     },
 
     toolGroup: {
-        editedFile: 'Edited file',
-        editedFiles: ({ count }: { count: number }) => count === 1 ? 'Edited 1 file' : `Edited ${count} files`,
-        readFiles: ({ count }: { count: number }) => count === 1 ? 'Read 1 file' : `Read ${count} files`,
-        ranCommands: ({ count }: { count: number }) => count === 1 ? 'Ran 1 command' : `Ran ${count} commands`,
-        searched: ({ count }: { count: number }) => count === 1 ? 'Searched 1 time' : `Searched ${count} times`,
-        fetchedUrls: ({ count }: { count: number }) => count === 1 ? 'Fetched 1 URL' : `Fetched ${count} URLs`,
-        ranTasks: ({ count }: { count: number }) => count === 1 ? 'Ran 1 task' : `Ran ${count} tasks`,
-        usedTools: ({ count }: { count: number }) => count === 1 ? 'Used 1 tool' : `Used ${count} tools`,
+        ran: 'Ran',
+        edited: 'Edited',
+        read: 'Read',
+        searched: 'Searched',
+        fetched: 'Fetched',
+        ranTask: 'Ran task',
         workedFor: ({ duration }: { duration: string }) => `Worked ${duration}`,
+        hide: 'Hide',
     },
 
     tools: {
@@ -697,6 +692,16 @@ export const en: TranslationStructure = {
         fileConflictDescription: 'This file was modified on the device while you were editing. Reload to see the latest version.',
         reload: 'Reload',
         overwrite: 'Overwrite',
+    },
+    diff: {
+        showMoreLines: ({ count }: { count: number }) => `Show ${count} more lines`,
+        tapToExpand: ({ count }: { count: number }) => `${count} changed lines — tap to expand`,
+        ignoreWhitespace: 'Ignore whitespace',
+        imageBefore: 'Before',
+        imageAfter: 'After',
+        unchangedLines: ({ count }: { count: number }) => `${count} unchanged`,
+        noChanges: 'No changes',
+        binaryFile: 'Binary file not shown',
     },
     sideChat: {
         panelTitle: 'Side chat',
@@ -1078,6 +1083,11 @@ export const en: TranslationStructure = {
             : `${count} images could not be uploaded and were not sent.`,
         notSupportedTitle: 'Images Not Supported',
         notSupportedMessage: 'This agent does not support image attachments. Images were not sent.',
+        sourceTitle: 'Add Photo',
+        sourceLibrary: 'Photo Library',
+        sourceCamera: 'Take Photo',
+        cameraPermissionTitle: 'Camera Access',
+        cameraPermissionMessage: 'Allow access to your camera to take photos for messages.',
     },
 
     feed: {

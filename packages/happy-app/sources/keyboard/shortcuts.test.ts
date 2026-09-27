@@ -118,6 +118,11 @@ describe('session action shortcuts', () => {
             'duplicate',
             'copy-metadata',
             'copy-metadata-and-logs',
+            'handoff-claude',
+            'handoff-codex',
+            'handoff-gemini',
+            'handoff-openhands_local',
+            'handoff-openhands_deepinfra',
             'archive',
         ]);
     });

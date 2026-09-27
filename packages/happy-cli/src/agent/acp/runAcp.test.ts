@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const sessionHandlers = new Map<string, (params: any) => Promise<any> | any>();
@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
     setModeCalls: [] as string[],
     setModelCalls: [] as string[],
     startSessionMessages: [] as any[],
+    sendPromptError: null as Error | null,
     startSessionCalls: 0,
     cancelCalls: [] as string[],
     disposeCalls: 0,
@@ -43,7 +44,7 @@ const mocks = vi.hoisted(() => {
     mockReadSettings: vi.fn(async () => ({ machineId: 'machine-1', sandboxConfig: undefined })),
     mockApiCreate: vi.fn(),
     mockGetOrCreateMachine: vi.fn(async () => ({})),
-    mockGetOrCreateSession: vi.fn(async () => ({ id: 'session-1' })),
+    mockGetOrCreateSession: vi.fn(async (_params: { tag: string; metadata: Record<string, unknown>; state: unknown }) => ({ id: 'session-1' })),
     mockSetupOfflineReconnection: vi.fn(),
     mockNotifyDaemonSessionStarted: vi.fn(async () => ({ error: null })),
     mockStartHappyServer: vi.fn(),
@@ -144,6 +145,9 @@ vi.mock('./AcpBackend', () => ({
 
     async sendPrompt(sessionId: string, prompt: string) {
       mocks.backendState.prompts.push({ sessionId, prompt });
+      if (mocks.backendState.sendPromptError) {
+        throw mocks.backendState.sendPromptError;
+      }
       for (const listener of mocks.backendState.listeners) {
         listener({ type: 'status', status: 'running' });
         listener({ type: 'model-output', textDelta: 'hello' });
@@ -201,6 +205,7 @@ describe('runAcp', () => {
     mocks.backendState.setModeCalls = [];
     mocks.backendState.setModelCalls = [];
     mocks.backendState.startSessionMessages = [];
+    mocks.backendState.sendPromptError = null;
     mocks.backendState.startSessionCalls = 0;
     mocks.backendState.cancelCalls = [];
     mocks.backendState.disposeCalls = 0;
@@ -439,8 +444,40 @@ describe('runAcp', () => {
     });
 
     expect(consoleLines()).toContain('Status: error: spawn opencode ENOENT');
+    expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({
+      type: 'message',
+      message: 'opencode error: spawn opencode ENOENT',
+    });
     expect(mocks.mockSession.close).toHaveBeenCalled();
     expect(mocks.backendState.disposeCalls).toBe(1);
+  });
+
+  it('surfaces a prompt exception when no backend error status was emitted', async () => {
+    mocks.backendState.sendPromptError = new Error('model switch failed');
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'opencode',
+      command: 'opencode',
+      args: ['acp'],
+    });
+    const runOutcome = runPromise.then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Use that model' },
+    });
+
+    expect(await runOutcome).toMatchObject({ message: 'model switch failed' });
+    expect(mocks.mockSession.sendSessionEvent).toHaveBeenCalledWith({
+      type: 'message',
+      message: 'opencode error: model switch failed',
+    });
   });
 
   it('updates session metadata with ACP config options (models and operating modes)', async () => {
@@ -653,5 +690,128 @@ describe('runAcp', () => {
     expect(mocks.backendState.setConfigOptionCalls).toEqual([]);
     expect(mocks.backendState.setModeCalls).toEqual([]);
     expect(mocks.backendState.setModelCalls).toEqual([]);
+  });
+
+  describe('fork lineage', () => {
+    const forkEnvKeys = ['HAPPY_FORKED_FROM_SESSION_ID', 'HAPPY_FORKED_FROM_MESSAGE_ID', 'HAPPY_SIDE_CHAT'] as const;
+    const savedEnv: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+      for (const key of forkEnvKeys) {
+        savedEnv[key] = process.env[key];
+        delete process.env[key];
+      }
+    });
+
+    afterEach(() => {
+      for (const key of forkEnvKeys) {
+        if (savedEnv[key] === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = savedEnv[key];
+        }
+      }
+    });
+
+    // The daemon sets these env vars for any spawn that is a fork, duplicate,
+    // or "ask another model" handoff. runClaude.ts and runCodex.ts already
+    // read them; the ACP runner (gemini, opencode, and both OpenHands
+    // presets all launch through it) silently dropped them, so a forked
+    // OpenHands session lost its parent link even though the daemon sent one.
+    it('carries fork lineage env vars into ACP session metadata', async () => {
+      process.env.HAPPY_FORKED_FROM_SESSION_ID = 'parent-session-1';
+      process.env.HAPPY_FORKED_FROM_MESSAGE_ID = 'parent-message-1';
+      process.env.HAPPY_SIDE_CHAT = '1';
+
+      const runPromise = runAcp({
+        credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        agentName: 'openhands',
+        command: 'openhands',
+        args: ['acp'],
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.mockGetOrCreateSession).toHaveBeenCalled();
+      });
+
+      await mocks.getKillHandler()!();
+      await runPromise;
+
+      const [{ metadata }] = mocks.mockGetOrCreateSession.mock.calls[0];
+      expect(metadata).toMatchObject({
+        parentSessionId: 'parent-session-1',
+        forkedFromMessageId: 'parent-message-1',
+        isSideChat: true,
+      });
+    });
+
+    it('omits lineage fields entirely for a non-forked session', async () => {
+      const runPromise = runAcp({
+        credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        agentName: 'openhands',
+        command: 'openhands',
+        args: ['acp'],
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.mockGetOrCreateSession).toHaveBeenCalled();
+      });
+
+      await mocks.getKillHandler()!();
+      await runPromise;
+
+      const [{ metadata }] = mocks.mockGetOrCreateSession.mock.calls[0];
+      expect(metadata).not.toHaveProperty('parentSessionId');
+      expect(metadata).not.toHaveProperty('forkedFromMessageId');
+      expect(metadata).not.toHaveProperty('isSideChat');
+    });
+  });
+
+  describe('session flavor', () => {
+    // The daemon launches both OpenHands presets through the same ACP runner
+    // but with distinct agent names (openhandsLaunchPlan.ts + acpAgentConfig.ts).
+    // Recording a preset-specific flavor, not a generic "acp" one, is what lets
+    // the session-info screen, analytics, and the "ask another model" handoff
+    // menu tell which OpenHands preset is actually running.
+    it.each(['openhands_local', 'openhands_deepinfra'] as const)(
+      'records %s as its own session flavor, not the generic "acp" bucket',
+      async (agentName) => {
+        const runPromise = runAcp({
+          credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+          agentName,
+          command: 'openhands',
+          args: ['acp'],
+        });
+
+        await vi.waitFor(() => {
+          expect(mocks.mockGetOrCreateSession).toHaveBeenCalled();
+        });
+
+        await mocks.getKillHandler()!();
+        await runPromise;
+
+        const [{ metadata }] = mocks.mockGetOrCreateSession.mock.calls[0];
+        expect(metadata.flavor).toBe(agentName);
+      },
+    );
+
+    it('still buckets other ACP-driven agents (besides gemini/opencode) under the generic "acp" flavor', async () => {
+      const runPromise = runAcp({
+        credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        agentName: 'some-future-acp-agent',
+        command: 'some-future-acp-agent',
+        args: [],
+      });
+
+      await vi.waitFor(() => {
+        expect(mocks.mockGetOrCreateSession).toHaveBeenCalled();
+      });
+
+      await mocks.getKillHandler()!();
+      await runPromise;
+
+      const [{ metadata }] = mocks.mockGetOrCreateSession.mock.calls[0];
+      expect(metadata.flavor).toBe('acp');
+    });
   });
 });

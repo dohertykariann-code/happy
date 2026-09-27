@@ -3,8 +3,10 @@ import {
     collectMachineChoices,
     findMachineChoice,
     machineChoiceAgentAvailable,
+    machineChoiceAgentVisible,
     resolveAgentMachine,
     resolveChoiceAgent,
+    resolveWorktreeCreationMachine,
 } from './machineChoices';
 import type { Machine } from './storageTypes';
 
@@ -131,7 +133,26 @@ describe('what a computer can actually run', () => {
     it('believes a CLI that reports nothing, rather than assuming it has everything', () => {
         const choice = collectMachineChoices([machine('bare', { host: 'old.local' })])[0];
         expect(machineChoiceAgentAvailable(choice, 'claude')).toBe(true);
+        expect(machineChoiceAgentAvailable(choice, 'agy')).toBe(false);
         expect(machineChoiceAgentAvailable(choice, 'rig')).toBe(false);
+    });
+
+    it('only shows Antigravity, OpenHands, and Happy Agent when available on the machine', () => {
+        const absent = collectMachineChoices([cli()])[0];
+        const paired = collectMachineChoices([cli(), rig()])[0];
+        const installed = collectMachineChoices([machine('agy-machine', {
+            host: 'laptop.local',
+            cliAvailability: { claude: true, agy: true, openhands: true },
+        })])[0];
+
+        expect(machineChoiceAgentVisible(absent, 'agy')).toBe(false);
+        expect(machineChoiceAgentVisible(installed, 'agy')).toBe(true);
+        expect(machineChoiceAgentVisible(absent, 'openhands_local')).toBe(false);
+        expect(machineChoiceAgentVisible(installed, 'openhands_local')).toBe(true);
+        expect(machineChoiceAgentVisible(installed, 'openhands_deepinfra')).toBe(true);
+        expect(machineChoiceAgentVisible(absent, 'claude')).toBe(true);
+        expect(machineChoiceAgentVisible(absent, 'rig')).toBe(false);
+        expect(machineChoiceAgentVisible(paired, 'rig')).toBe(true);
     });
 
     it('keeps a stale draft from starting an agent this computer cannot run', () => {
@@ -151,6 +172,35 @@ describe('what a computer can actually run', () => {
     it('reports no daemon rather than handing the request to the wrong one', () => {
         const rigOnly = collectMachineChoices([rig(RIG, 'missing-sibling')])[0];
         expect(resolveAgentMachine(rigOnly, 'claude')).toBeNull();
+    });
+});
+
+describe('choosing where to create a worktree', () => {
+    it('uses Happy CLI for a Happy Agent workspace when the pair is online', () => {
+        const choice = collectMachineChoices([cli(), rig()])[0];
+
+        expect(resolveWorktreeCreationMachine(choice, 'rig', false)?.id).toBe(CLI);
+    });
+
+    it('uses Happy Agent directly when it supports worktrees and has no CLI pair', () => {
+        const choice = collectMachineChoices([rig(RIG, 'missing-sibling')])[0];
+
+        expect(resolveWorktreeCreationMachine(choice, 'rig', true)?.id).toBe(RIG);
+    });
+
+    it('does not bypass another harness worktree limitation', () => {
+        const choice = collectMachineChoices([cli(), rig()])[0];
+
+        expect(resolveWorktreeCreationMachine(choice, 'openclaw', false)).toBeNull();
+    });
+
+    it('does not offer an offline CLI as Happy Agent worktree support', () => {
+        const choice = collectMachineChoices([
+            cli(CLI, { active: false }),
+            rig(RIG, CLI, { active: true }),
+        ])[0];
+
+        expect(resolveWorktreeCreationMachine(choice, 'rig', false)).toBeNull();
     });
 });
 

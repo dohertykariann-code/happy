@@ -1,7 +1,10 @@
 import type { Metadata } from '@/sync/storageTypes';
 import { hackModes } from '@/sync/modeHacks';
 import { sortPermissionModes } from '@/utils/permissionModeLabels';
-import { getCodeAgentDefaults } from '@/sync/agentDefaults';
+import { sortRigModelsForPicker } from '@/utils/rigModelPickerOrder';
+import { compareVersionsWithPrerelease, isWellFormedVersion } from '@/utils/versionUtils';
+import { CLI_VERSION_WITH_AUTO, getCodeAgentDefaults } from '@/sync/agentDefaults';
+export { CLI_VERSION_WITH_AUTO } from '@/sync/agentDefaults';
 import {
     getRigCurrentModel,
     getRigModels,
@@ -16,6 +19,10 @@ export type ModeOption = {
     description?: string | null;
     semanticKind?: string | null;
     disabled?: boolean;
+    // The happy-cli version that first parses this mode. Untagged modes are
+    // offered to every CLI; tagged ones are hidden from CLIs known to be older
+    // (see filterPermissionModesForCli).
+    sinceCliVersion?: string;
 };
 
 export type PermissionMode = ModeOption;
@@ -30,6 +37,35 @@ export type ModelMode = ModeOption & {
     defaultThinkingLevel?: string | null;
     unavailable?: boolean;
 };
+
+export type ModelModeProviderGroup = {
+    key: string;
+    title: string | null;
+    models: ModelMode[];
+};
+
+/**
+ * Group models without sorting them. Provider groups keep the order in which
+ * the backend first publishes each provider, and rows keep their wire order.
+ */
+export function groupModelModesByProvider(models: readonly ModelMode[]): ModelModeProviderGroup[] {
+    const groups = new Map<string, ModelModeProviderGroup>();
+    for (const model of models) {
+        const providerId = model.providerId?.trim() || null;
+        const key = providerId ?? '__models__';
+        let group = groups.get(key);
+        if (!group) {
+            group = {
+                key,
+                title: model.providerName?.trim() || providerId,
+                models: [],
+            };
+            groups.set(key, group);
+        }
+        group.models.push(model);
+    }
+    return [...groups.values()];
+}
 
 export type EffortLevel = ModeOption;
 export type PermissionModeKey = string;
@@ -46,12 +82,12 @@ type MetadataOption = {
 };
 
 const GEMINI_MODEL_FALLBACKS: ModelMode[] = [
-    { key: 'gemini-3.1-pro-preview', name: 'gemini 3.1 pro', description: 'latest & most capable' },
-    { key: 'gemini-3-flash-preview', name: 'gemini 3 flash', description: 'latest & fast' },
-    { key: 'gemini-3.1-flash-lite-preview', name: 'gemini 3.1 flash lite', description: 'latest & fastest' },
-    { key: 'gemini-2.5-pro', name: 'gemini 2.5 pro', description: 'most capable' },
-    { key: 'gemini-2.5-flash', name: 'gemini 2.5 flash', description: 'fast & efficient' },
-    { key: 'gemini-2.5-flash-lite', name: 'gemini 2.5 flash lite', description: 'fastest' },
+    { key: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', description: 'latest & most capable' },
+    { key: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', description: 'latest & fast' },
+    { key: 'gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', description: 'latest & fastest' },
+    { key: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'most capable' },
+    { key: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: 'fast & efficient' },
+    { key: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', description: 'fastest' },
 ];
 
 export function mapMetadataOptions(options?: MetadataOption[] | null): ModeOption[] {
@@ -81,7 +117,7 @@ export function mapMetadataOptions(options?: MetadataOption[] | null): ModeOptio
 // sending it fails UserMessageSchema.safeParse and drops the whole prompt.
 export function getClaudePermissionModes(translate: Translate): PermissionMode[] {
     return [
-        { key: 'auto', name: 'Auto', description: translate('agentInput.permissionMode.auto') },
+        { key: 'auto', name: 'Auto', description: translate('agentInput.permissionMode.auto'), sinceCliVersion: CLI_VERSION_WITH_AUTO },
         { key: 'acceptEdits', name: 'Edits', description: translate('agentInput.permissionMode.acceptEdits') },
         { key: 'plan', name: 'Plan', description: translate('agentInput.permissionMode.plan') },
         { key: 'bypassPermissions', name: 'Yolo', description: translate('agentInput.permissionMode.bypassPermissions') },
@@ -97,7 +133,7 @@ export function getClaudePermissionModes(translate: Translate): PermissionMode[]
 // sandbox but stops asking, so it is the one named for the sandbox.
 export function getCodexPermissionModes(translate: Translate): PermissionMode[] {
     return [
-        { key: 'auto', name: 'Auto', description: translate('agentInput.codexPermissionMode.autoDescription') },
+        { key: 'auto', name: 'Auto', description: translate('agentInput.codexPermissionMode.autoDescription'), sinceCliVersion: CLI_VERSION_WITH_AUTO },
         { key: 'safe-yolo', name: 'Workspace', description: translate('agentInput.codexPermissionMode.safeYoloDescription') },
         { key: 'read-only', name: 'Read', description: translate('agentInput.codexPermissionMode.readOnlyDescription') },
         { key: 'yolo', name: 'Yolo', description: translate('agentInput.codexPermissionMode.yoloDescription') },
@@ -118,33 +154,57 @@ export function getGeminiPermissionModes(translate: Translate): PermissionMode[]
     ];
 }
 
+// The current generation only. Older Claudes and the `default model` row are
+// deliberately absent: picking a model is the point of this menu, and every
+// entry here is a 5.
+//
+// Keys are full model IDs rather than the short aliases, because the aliases
+// do not all mean what the row says. `sonnet` still resolves to Sonnet 4.6 in
+// the CLI's alias table, and `opus-5` is not in that table at all (`claude
+// --model opus-5` errors on 2.1.199). Full IDs pass straight through to the
+// API, so they say exactly which model is meant. The `[1m]` suffix is part of
+// the model ID Claude Code accepts (`claude --model 'claude-opus-5[1m]'`) and
+// selects the 1M-context variant; unknown bracket models are rejected, so the
+// suffix is honored rather than silently dropped (#1721).
 export function getClaudeModelModes(): ModelMode[] {
     return [
-        { key: 'default', name: 'default model', description: null },
-        // Full model ID, not the `opus-5` short alias: the alias is not in the
-        // CLI's alias table yet (`claude --model opus-5` errors on 2.1.199),
-        // while the full ID passes straight through to the API.
-        { key: 'claude-opus-5', name: 'opus 5', description: null },
-        { key: 'opus', name: 'opus 4.8', description: null },
-        { key: 'fable', name: 'fable 5', description: null },
-        { key: 'sonnet', name: 'sonnet 4.6', description: null },
-        { key: 'haiku', name: 'haiku 4.5', description: null },
+        { key: 'claude-fable-5-1', name: 'Fable 5.1', description: '1M context', providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'claude-fable-5', name: 'Fable 5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'claude-opus-5', name: 'Opus 5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'claude-opus-5[1m]', name: 'Opus 5 [1M]', description: '1M context', providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'claude-sonnet-5', name: 'Sonnet 5', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
     ];
 }
 
 export function getCodexModelModes(): ModelMode[] {
     return [
-        { key: 'default', name: 'default model', description: null },
-        { key: 'gpt-5.6-sol', name: 'gpt-5.6 sol', description: null },
-        { key: 'gpt-5.6-terra', name: 'gpt-5.6 terra', description: null },
-        { key: 'gpt-5.6-luna', name: 'gpt-5.6 luna', description: null },
-        { key: 'gpt-5.5', name: 'gpt-5.5', description: null },
-        { key: 'gpt-5.4', name: 'gpt-5.4', description: null },
-        { key: 'gpt-5.3-codex', name: 'gpt-5.3-codex', description: null },
-        { key: 'gpt-5.2-codex', name: 'gpt-5.2-codex', description: null },
-        { key: 'gpt-5.1-codex-max', name: 'gpt-5.1-codex-max', description: null },
-        { key: 'gpt-5.2', name: 'gpt-5.2', description: null },
-        { key: 'gpt-5.1-codex-mini', name: 'gpt-5.1-codex-mini', description: null },
+        { key: 'gpt-6-astra', name: 'GPT-6 Astra', description: 'most capable', providerId: 'openai', providerName: 'OpenAI' },
+        { key: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', description: null, providerId: 'openai', providerName: 'OpenAI' },
+        { key: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', description: null, providerId: 'openai', providerName: 'OpenAI' },
+        { key: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', description: null, providerId: 'openai', providerName: 'OpenAI' },
+    ];
+}
+
+export function includeConfiguredModel(
+    flavor: AgentFlavor,
+    models: ModelMode[],
+    configuredModelKey: string | null | undefined,
+): ModelMode[] {
+    if (
+        (flavor !== 'codex' && flavor !== 'agy')
+        || !configuredModelKey
+        || configuredModelKey === 'default'
+        || models.some((model) => model.key === configuredModelKey)
+    ) {
+        return models;
+    }
+    return [
+        ...models,
+        {
+            key: configuredModelKey,
+            name: configuredModelKey,
+            description: flavor === 'agy' ? 'saved model' : 'custom model',
+        },
     ];
 }
 
@@ -160,6 +220,12 @@ export function getOpenClawPermissionModes(translate: Translate): PermissionMode
         { key: 'bypassPermissions', name: 'Yolo', description: translate('agentInput.permissionMode.openclawInert') },
         { key: 'default', name: 'Default', description: translate('agentInput.permissionMode.openclawInert') },
     ];
+}
+
+function getOpenHandsPermissionModes(): PermissionMode[] {
+    // The daemon pins each OpenHands provider/model preset in its child
+    // environment. ACP owns any provider-specific controls it exposes.
+    return [{ key: 'default', name: 'Default', description: null }];
 }
 
 // agy --print only distinguishes --sandbox (default) from --dangerously-skip-permissions,
@@ -180,6 +246,72 @@ export function getAgyPermissionModes(translate: Translate): PermissionMode[] {
     ];
 }
 
+// Before the release tagged above the CLI's MessageMetaSchema rejected `auto`,
+// and a rejected mode dropped the whole prompt — the same failure mode
+// `dontAsk` had.
+
+/**
+ * True when the CLI at `cliVersion` parses this mode. An untagged mode is
+ * supported everywhere. An absent version stays permissive: every happy-cli
+ * reports its version in both session and machine metadata, so no version
+ * means the client is not happy-cli (e.g. a pre-catalog Rig session). A
+ * version that is present but unparseable hides tagged modes instead — a
+ * mangled happy-cli version is more likely old than new.
+ */
+export function modeSupportedByCli(
+    mode: Pick<ModeOption, 'sinceCliVersion'>,
+    cliVersion: string | null | undefined,
+): boolean {
+    if (!mode.sinceCliVersion || !cliVersion) {
+        return true;
+    }
+    if (!isWellFormedVersion(cliVersion)) {
+        return false;
+    }
+    return compareVersionsWithPrerelease(cliVersion, mode.sinceCliVersion) >= 0;
+}
+
+// The version tags by mode key, for callers that hold a bare key rather than
+// a ModeOption — the option lists below and the outbound-message path both
+// read from here so the two can never disagree.
+const PERMISSION_MODE_SINCE_CLI_VERSION: Record<string, string> = {
+    auto: CLI_VERSION_WITH_AUTO,
+};
+
+/**
+ * True when the CLI at `cliVersion` parses this mode key. The bare-key twin of
+ * modeSupportedByCli, for callers that hold a saved key rather than a
+ * ModeOption. Picker filtering alone does not cover those: an existing session
+ * or a saved agent default can carry a mode the session's older CLI never
+ * offered, and the send path must refuse it loudly rather than substitute a
+ * different mode behind the user's back.
+ */
+export function permissionModeSupportedByCli(
+    modeKey: string | null | undefined,
+    cliVersion: string | null | undefined,
+): boolean {
+    if (!modeKey) {
+        return true;
+    }
+    return modeSupportedByCli(
+        { sinceCliVersion: PERMISSION_MODE_SINCE_CLI_VERSION[modeKey] },
+        cliVersion,
+    );
+}
+
+/**
+ * Drops modes the CLI on the receiving machine cannot parse, going by each
+ * mode's own sinceCliVersion tag. Applies to the hardcoded flavor lists only —
+ * a harness that publishes its own catalog (rig metadata) owns its codes and
+ * already matches its own version.
+ */
+export function filterPermissionModesForCli<T extends ModeOption>(
+    modes: T[],
+    cliVersion: string | null | undefined,
+): T[] {
+    return modes.filter((mode) => modeSupportedByCli(mode, cliVersion));
+}
+
 export function getHardcodedPermissionModes(flavor: AgentFlavor, translate: Translate): PermissionMode[] {
     if (flavor === 'codex') {
         return getCodexPermissionModes(translate);
@@ -193,29 +325,34 @@ export function getHardcodedPermissionModes(flavor: AgentFlavor, translate: Tran
     if (flavor === 'agy') {
         return getAgyPermissionModes(translate);
     }
+    if (flavor === 'openhands_local' || flavor === 'openhands_deepinfra') {
+        return getOpenHandsPermissionModes();
+    }
     return getClaudePermissionModes(translate);
 }
 
 export function getOpenClawModelModes(): ModelMode[] {
     return [
-        { key: 'default', name: 'default model', description: null },
+        { key: 'default', name: 'Default model', description: null },
     ];
 }
 
-// Keys are the exact display names `agy --model` accepts (as printed by `agy models`).
+function getOpenHandsModelModes(flavor: AgentFlavor): ModelMode[] {
+    if (flavor === 'openhands_local') {
+        return [{ key: 'ollama/qwen2.5:14b', name: 'Qwen 2.5 14B (Local)', description: null }];
+    }
+    return [{ key: 'openai/deepseek-ai/DeepSeek-V4-Flash', name: 'DeepSeek V4 Flash (DeepInfra)', description: null }];
+}
+
+// Gemini effort is deliberately not encoded into separate model rows. Happy's
+// existing effort picker carries `low`/`medium`/`high` independently, and happy-cli
+// resolves the pair to the exact display name `agy --model` accepts.
 export function getAgyModelModes(): ModelMode[] {
     return [
-        { key: 'Gemini 3.6 Flash (High)', name: 'gemini 3.6 flash (high)', description: null },
-        { key: 'Gemini 3.6 Flash (Medium)', name: 'gemini 3.6 flash (medium)', description: null },
-        { key: 'Gemini 3.6 Flash (Low)', name: 'gemini 3.6 flash (low)', description: null },
-        { key: 'Gemini 3.1 Pro (High)', name: 'gemini 3.1 pro (high)', description: null },
-        { key: 'Gemini 3.1 Pro (Low)', name: 'gemini 3.1 pro (low)', description: null },
-        { key: 'Gemini 3.5 Flash (High)', name: 'gemini 3.5 flash (high)', description: null },
-        { key: 'Gemini 3.5 Flash (Medium)', name: 'gemini 3.5 flash (medium)', description: null },
-        { key: 'Gemini 3.5 Flash (Low)', name: 'gemini 3.5 flash (low)', description: null },
-        { key: 'Claude Opus 4.6 (Thinking)', name: 'claude opus 4.6 (thinking)', description: null },
-        { key: 'Claude Sonnet 4.6 (Thinking)', name: 'claude sonnet 4.6 (thinking)', description: null },
-        { key: 'GPT-OSS 120B (Medium)', name: 'gpt-oss 120b (medium)', description: null },
+        { key: 'Gemini 3.8 Flash', name: 'Gemini 3.8 Flash', description: null, providerId: 'google', providerName: 'Google' },
+        { key: 'Claude Sonnet 4.6 (Thinking)', name: 'Claude Sonnet 4.6 (Thinking)', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'Claude Opus 4.6 (Thinking)', name: 'Claude Opus 4.6 (Thinking)', description: null, providerId: 'anthropic', providerName: 'Anthropic' },
+        { key: 'GPT-OSS 120B (Medium)', name: 'GPT-OSS 120B (Medium)', description: null, providerId: 'openai', providerName: 'OpenAI' },
     ];
 }
 
@@ -232,6 +369,9 @@ export function getHardcodedModelModes(flavor: AgentFlavor, _translate: Translat
     if (flavor === 'agy') {
         return getAgyModelModes();
     }
+    if (flavor === 'openhands_local' || flavor === 'openhands_deepinfra') {
+        return getOpenHandsModelModes(flavor);
+    }
     return getClaudeModelModes();
 }
 
@@ -242,7 +382,7 @@ export function getAvailableModels(
     selectedKey?: string | null,
 ): ModelMode[] {
     if (isRigMetadataV1(metadata)) {
-        const models: ModelMode[] = getRigModels(metadata).map((model) => ({
+        const models: ModelMode[] = sortRigModelsForPicker(getRigModels(metadata)).map((model) => ({
             key: model.key,
             name: model.name,
             description: model.providerName,
@@ -257,7 +397,7 @@ export function getAvailableModels(
         }));
         const current = getRigCurrentModel(metadata);
         if (current?.unavailable && !models.some((model) => model.key === current.key)) {
-            models.unshift({
+            models.push({
                 key: current.key,
                 name: current.name,
                 description: `${current.providerName} · unavailable`,
@@ -276,7 +416,7 @@ export function getAvailableModels(
             const separator = locallySelectedKey.indexOf(':');
             const providerId = locallySelectedKey.slice(0, separator);
             const modelId = locallySelectedKey.slice(separator + 1);
-            models.unshift({
+            models.push({
                 key: locallySelectedKey,
                 name: modelId,
                 description: `${providerId} · unavailable`,
@@ -297,7 +437,11 @@ export function getAvailableModels(
         }
         return metadataModels;
     }
-    return getHardcodedModelModes(flavor, translate);
+    return includeConfiguredModel(
+        flavor,
+        getHardcodedModelModes(flavor, translate),
+        selectedKey,
+    );
 }
 
 export function getAvailablePermissionModes(
@@ -329,7 +473,12 @@ export function getAvailablePermissionModes(
         return modes;
     }
     if (flavor === 'claude' || flavor === 'codex' || flavor === 'openclaw' || flavor === 'agy') {
-        return hackModes(getHardcodedPermissionModes(flavor, translate));
+        // metadata.version is the happy-cli version running this session
+        // (createSessionMetadata.ts), which is what has to parse the mode.
+        return hackModes(filterPermissionModesForCli(
+            getHardcodedPermissionModes(flavor, translate),
+            metadata?.version,
+        ));
     }
 
     const metadataModes = mapMetadataOptions(metadata?.operatingModes);
@@ -370,28 +519,70 @@ export function getDefaultPermissionModeKey(flavor: AgentFlavor): string {
 
 // Effort levels per agent type
 
-export function getClaudeEffortLevels(): EffortLevel[] {
-    return [
-        { key: 'low', name: 'low' },
-        { key: 'medium', name: 'medium' },
-        { key: 'high', name: 'high' },
-        { key: 'xhigh', name: 'xhigh' },
-        { key: 'max', name: 'max' },
-    ];
+// Display capitalization only — the key is what the wire protocol accepts.
+// `xhigh` keeps its camel-cased brand spelling instead of plain title case.
+const EFFORT_DISPLAY_NAMES: Record<string, string> = {
+    xhigh: 'xHigh',
+};
+
+export function effortDisplayName(key: string): string {
+    return EFFORT_DISPLAY_NAMES[key] ?? (key.charAt(0).toUpperCase() + key.slice(1));
 }
 
-export function getCodexEffortLevels(): EffortLevel[] {
-    return [
-        { key: 'low', name: 'low' },
-        { key: 'medium', name: 'medium' },
-        { key: 'high', name: 'high' },
-        { key: 'xhigh', name: 'xhigh' },
-    ];
+function effortLevels(keys: readonly string[]): EffortLevel[] {
+    return keys.map((key) => ({ key, name: effortDisplayName(key) }));
+}
+
+// The Claude Agent SDK's own EffortLevel union, in order
+// (node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts:546). There is no
+// `off`: Claude's floor is `low`.
+const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+// Antigravity exposes Gemini 3.8 Flash's three selectable thinking variants as
+// separate model display names. Happy presents them through its effort picker;
+// happy-cli performs the final model-name mapping at the provider boundary.
+const AGY_EFFORTS_BY_MODEL: Record<string, readonly string[]> = {
+    'Gemini 3.8 Flash': ['low', 'medium', 'high'],
+};
+
+// Exactly what each model publishes in Codex's own registry, in its order
+// (codex-rs/models-manager/models.json; astra verified against the 0.153.4
+// host registry). This really is per-model: astra, sol, and terra reach
+// `ultra`, luna stops at `max`. `ultra` is documented as maximum reasoning
+// with automatic task delegation, so it is a different kind of run rather
+// than one more notch — but it is a level these models accept, so the picker
+// offers it rather than deciding for you.
+const CODEX_EFFORTS_BY_MODEL: Record<string, readonly string[]> = {
+    'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    'gpt-5.6-sol': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    'gpt-5.6-terra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    'gpt-5.6-luna': ['low', 'medium', 'high', 'xhigh', 'max'],
+};
+const CODEX_EFFORTS_FALLBACK = ['low', 'medium', 'high', 'xhigh'] as const;
+
+export function getClaudeEffortLevels(): EffortLevel[] {
+    return effortLevels(CLAUDE_EFFORTS);
+}
+
+export function getAgyEffortLevels(modelKey?: string | null): EffortLevel[] {
+    return effortLevels((modelKey ? AGY_EFFORTS_BY_MODEL[modelKey] : undefined) ?? []);
+}
+
+/**
+ * Codex efforts for one model. An unknown model — a workspace's own, or one
+ * newer than this table — gets the conservative set every gpt-5 accepts rather
+ * than a guess at the top of its range.
+ */
+export function getCodexEffortLevels(modelKey?: string | null): EffortLevel[] {
+    return effortLevels(
+        (modelKey ? CODEX_EFFORTS_BY_MODEL[modelKey] : undefined) ?? CODEX_EFFORTS_FALLBACK,
+    );
 }
 
 export function getHardcodedEffortLevels(flavor: AgentFlavor): EffortLevel[] {
     if (flavor === 'claude') return getClaudeEffortLevels();
     if (flavor === 'codex') return getCodexEffortLevels();
+    if (flavor === 'agy') return getAgyEffortLevels(getDefaultModelKey('agy'));
     return [];
 }
 
@@ -408,18 +599,22 @@ export function getEffortLevelsForModel(
     if (isRigMetadataV1(metadata)) {
         return getRigReasoningLevels(metadata, modelKey).map((level) => ({
             key: level,
-            name: level,
+            name: effortDisplayName(level),
         }));
     }
-    // Claude and Codex expose effort/thought levels regardless of which
-    // specific model is picked — the same low/medium/high/max scale applies
-    // to the whole flavor (mirrors how Codex already worked, which the user
-    // asked Claude to match).
+    // Claude's effort scale is a property of the SDK rather than of the model:
+    // one union for every model, and a level the chosen model cannot reach is
+    // silently downgraded rather than rejected (sdk.d.ts:174). Codex is the
+    // opposite — each model publishes its own supported levels — so it is asked
+    // per model.
     if (flavor === 'claude') {
         return getClaudeEffortLevels();
     }
     if (flavor === 'codex') {
-        return getCodexEffortLevels();
+        return getCodexEffortLevels(modelKey);
+    }
+    if (flavor === 'agy') {
+        return getAgyEffortLevels(modelKey);
     }
     return [];
 }

@@ -5,11 +5,11 @@ import {
     Text,
     Pressable,
     Platform,
-    Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useFriendRequests, useSocketStatus, useRealtimeStatus } from '@/sync/storage';
+import { useFriendRequests, useSocketStatus, useRealtimeStatus, useSettingMutable } from '@/sync/storage';
+import { NativeSettingsMenu, type NativeSettingsMenuGroup } from './NativeSettingsMenu';
 import { useVisibleSessionListViewData } from '@/hooks/useVisibleSessionListViewData';
 import { useIsTablet } from '@/utils/responsive';
 import { useRouter } from 'expo-router';
@@ -111,7 +111,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     titleContainer: {
         flex: 1,
-        alignItems: Platform.OS === 'web' ? 'center' : 'flex-start',
+        alignItems: 'center',
         justifyContent: Platform.OS === 'web' ? 'flex-start' : 'center',
     },
     titleText: {
@@ -148,6 +148,13 @@ const styles = StyleSheet.create((theme) => ({
     headerActions: {
         flexDirection: 'row',
         alignItems: 'center',
+    },
+    // The seam between the two actions sharing the header pill. Shorter than
+    // the pill so it reads as a divider inside one control, not two controls.
+    headerActionDivider: {
+        width: StyleSheet.hairlineWidth,
+        height: 22,
+        backgroundColor: theme.colors.divider,
     },
 }));
 
@@ -229,18 +236,57 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
     const router = useRouter();
     const { theme } = useUnistyles();
     const isCustomServer = isUsingCustomServer();
+    const [sessionListGrouping, setSessionListGrouping] = useSettingMutable('sessionListGrouping');
 
     if (activeTab === 'sessions') {
         if (Platform.OS !== 'web') {
+            const viewMenuGroups: NativeSettingsMenuGroup[] = [
+                {
+                    key: 'grouping',
+                    label: t('sessionsFilter.groupingTitle'),
+                    title: t('sessionsFilter.groupingTitle'),
+                    systemImage: 'rectangle.grid.1x2',
+                    options: [
+                        { key: 'flat', label: t('sessionsFilter.flatList') },
+                        { key: 'project', label: t('sessionsFilter.groupByProject') },
+                    ],
+                    selectedKey: sessionListGrouping === 'project' ? 'project' : 'flat',
+                    onSelect: (key) => setSessionListGrouping(key === 'project' ? 'project' : 'flat'),
+                },
+                // A plain row, not a choice: it leaves this screen for the
+                // appearance settings, where the avatar options now live.
+                {
+                    key: 'appearance',
+                    label: '',
+                    title: '',
+                    options: [{
+                        key: 'open',
+                        label: t('sessionsFilter.appearanceSettings'),
+                        systemImage: 'paintpalette',
+                    }],
+                    selectedKey: null,
+                    onSelect: () => router.push('/settings/appearance'),
+                },
+            ];
             return (
                 <View style={styles.headerActions}>
+                    <NativeSettingsMenu
+                        groups={viewMenuGroups}
+                        anchor="top"
+                        accessibilityLabel={t('sessionsFilter.title')}
+                    >
+                        <View style={styles.headerActionButton}>
+                            <Ionicons name="filter" size={22} color={theme.colors.header.tint} />
+                        </View>
+                    </NativeSettingsMenu>
+                    <View style={styles.headerActionDivider} />
                     <Pressable
                         onPress={() => router.push('/settings')}
                         accessibilityLabel={t('settings.title')}
                         accessibilityRole="button"
                         style={styles.headerActionButton}
                     >
-                        <Ionicons name="settings-outline" size={21} color={theme.colors.header.tint} />
+                        <Ionicons name="settings-outline" size={22} color={theme.colors.header.tint} />
                     </Pressable>
                 </View>
             );
@@ -299,19 +345,24 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const friendRequests = useFriendRequests();
     const realtimeStatus = useRealtimeStatus();
     const safeArea = useSafeAreaInsets();
-    const { isStarting: isStartingHomeSession, startSession: startHomeSession } = useStartSessionFromDraft();
+    const {
+        isStarting: isStartingHomeSession,
+        phase: homeSessionPhase,
+        startSession: startHomeSession,
+        cancelStart: cancelHomeSession,
+    } = useStartSessionFromDraft();
 
     // Tab state management
     // NOTE: Zen tab removed - the feature never got to a useful state
     const [activeTab, setActiveTab] = React.useState<ActiveTabType>('sessions');
     const [homePrompt, setHomePrompt] = React.useState('');
     const showHeaderRight = activeTab !== 'settings' || isUsingCustomServer();
-    const topContentInset = Platform.OS === 'web'
+    const topChromeInset = Platform.OS === 'web'
         ? 0
         : safeArea.top
             + MOBILE_GLASS_HEADER_HEIGHT
-            + (realtimeStatus !== 'disconnected' ? 32 : 0)
-            + 12;
+            + (realtimeStatus !== 'disconnected' ? 32 : 0);
+    const topContentInset = topChromeInset + (Platform.OS === 'web' ? 0 : 12);
     const bottomContentInset = Platform.OS === 'web'
         ? 0
         : MOBILE_HOME_DOCK_CONTENT_INSET;
@@ -323,7 +374,8 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
             return false;
         }
         useNewSessionDraft.getState().setInput(prompt);
-        Keyboard.dismiss();
+        // The keyboard stays up: the dock reports what is happening above the
+        // composer and closes itself once the session is open.
         const started = await startHomeSession();
         if (started) setHomePrompt('');
         return started;
@@ -403,6 +455,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                 headerShadowVisible={false}
                 headerTransparent={true}
                 mobileTitleSurface="plain"
+                mobileTitleAlignment="center"
             />
             {realtimeStatus !== 'disconnected' && (
                 <VoiceAssistantStatusBar variant="full" />
@@ -418,6 +471,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                     <View style={styles.phoneSceneStack}>
                         <SessionsListWrapper
                             topContentInset={topContentInset}
+                            scrollIndicatorTopInset={topChromeInset}
                             bottomContentInset={bottomContentInset}
                         />
                     </View>
@@ -437,6 +491,8 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                         onPromptChange={setHomePrompt}
                         onSubmit={handleHomePromptSubmit}
                         isSubmitting={isStartingHomeSession}
+                        submitPhase={homeSessionPhase}
+                        onSubmitCancel={cancelHomeSession}
                         showBottomBackdrop={sessionListViewData !== null && sessionListViewData.length > 0}
                     />
                 </View>

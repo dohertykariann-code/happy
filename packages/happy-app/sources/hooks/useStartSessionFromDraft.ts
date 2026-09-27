@@ -1,7 +1,13 @@
 import * as React from 'react';
-import { useAllMachines, useSetting } from '@/sync/storage';
-import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
-import { machineSpawnNewSession, sessionSetAgentModes, type SessionAgentModesPatch } from '@/sync/ops';
+import { useAllMachines, useSessions, useSetting } from '@/sync/storage';
+import { getCodeAgentDefaults, resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import {
+    machineSpawnNewSession,
+    machineStopSession,
+    sessionArchive,
+    sessionKill,
+    sessionSetAgentModes,
+} from '@/sync/ops';
 import { sync } from '@/sync/sync';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
@@ -12,6 +18,9 @@ import {
     getEffortLevelsForModel,
     getHardcodedModelModes,
     getHardcodedPermissionModes,
+    filterPermissionModesForCli,
+    getSupportsWorktree,
+    includeConfiguredModel,
 } from '@/components/modelModeOptions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -20,6 +29,7 @@ import {
     findMachineChoice,
     resolveAgentMachine,
     resolveChoiceAgent,
+    resolveWorktreeCreationMachine,
 } from '@/sync/machineChoices';
 import { delay } from '@/utils/time';
 import {
@@ -32,8 +42,47 @@ import {
     completeSpawnRequest,
     resolveSpawnRequestId,
 } from '@/sync/spawnRequestId';
+import type { NewSessionStartPhase } from '@/components/newSessionProgress';
+import type { Session } from '@/sync/storageTypes';
+import { collectSessionPlaces, collectSessionWorkspaces } from '@/sync/agentSessionPlaces';
+import { resolveHappyAgentSpawnTarget } from '@/sync/happyAgentSpawn';
 
 const MAX_RIG_PENDING_RESULTS = 3;
+
+// Stop has to be felt at once. A request already on its way to the machine
+// cannot be recalled, and the machine may never answer it at all, so the flow
+// stops waiting on it rather than waiting for it: every await below races this,
+// and whatever the machine says afterwards is dealt with off screen.
+const CANCELED = Symbol('canceled');
+
+/**
+ * One attempt at starting a session.
+ *
+ * Cancellation is per attempt rather than a shared flag, so an attempt that is
+ * still unwinding cannot read — or write — the state of the one that replaced
+ * it. `canceled` is what the flow checks between steps; `signal` is what its
+ * awaits race, so a step already in flight ends immediately instead of at
+ * whatever point the machine feels like answering.
+ */
+type StartRun = {
+    canceled: boolean;
+    signal: Promise<typeof CANCELED>;
+    cancel: () => void;
+};
+
+function beginRun(): StartRun {
+    let resolve!: (value: typeof CANCELED) => void;
+    const signal = new Promise<typeof CANCELED>((r) => { resolve = r; });
+    const run: StartRun = {
+        canceled: false,
+        signal,
+        cancel: () => {
+            run.canceled = true;
+            resolve(CANCELED);
+        },
+    };
+    return run;
+}
 
 function resolveOption<T extends { key: string }>(
     options: T[],
@@ -49,17 +98,48 @@ function resolveOption<T extends { key: string }>(
 
 export function useStartSessionFromDraft() {
     const machines = useAllMachines({ includeOffline: true });
+    const sessions = useSessions();
     const defaultOverrides = useSetting('agentDefaultOverrides');
     const navigateToSession = useNavigateToSession();
-    const [isStarting, setIsStarting] = React.useState(false);
-    const isStartingRef = React.useRef(false);
+    // The composer stays on screen for the whole flow, so what it is waiting on
+    // is state rather than a bare boolean: creating a worktree, asking the
+    // machine for a session, and opening it are three different waits.
+    const [phase, setPhase] = React.useState<NewSessionStartPhase | null>(null);
+    const activeRunRef = React.useRef<StartRun | null>(null);
     const isMountedRef = React.useRef(true);
-    React.useEffect(() => () => {
-        isMountedRef.current = false;
+    React.useEffect(() => {
+        // Set on the way in as well as cleared on the way out. An effect that
+        // only clears is wrong for any setup/cleanup/setup cycle — Strict Mode
+        // does exactly that in development — and the flag would stay false for
+        // a mounted hook, which silently skips the final phase reset and leaves
+        // the composer spinning forever.
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
+    }, []);
+
+    const cancelStart = React.useCallback(() => {
+        const run = activeRunRef.current;
+        if (!run) return;
+        run.cancel();
+        // Spent here, synchronously, and not when the canceled flow eventually
+        // resumes. Stop hands the composer back on this same tick, so a new
+        // Start can be pressed before that resumption ever runs — and if the
+        // key were still pending it would be handed to that new attempt, which
+        // the machine would then dedupe straight onto the session this cancel
+        // is in the middle of killing.
+        completeSpawnRequest();
+        // The flow is let go of right here rather than when its body finishes
+        // unwinding. Waiting for that is what left Stop useless: one await that
+        // never returns and the composer, and every later Start, is held
+        // hostage by an attempt nobody is watching any more.
+        activeRunRef.current = null;
+        if (isMountedRef.current) setPhase(null);
     }, []);
 
     const startSession = React.useCallback(async (): Promise<boolean> => {
-        if (isStartingRef.current) return false;
+        if (activeRunRef.current) return false;
 
         const draft = useNewSessionDraft.getState();
         // The draft names a computer, which may run both Happy CLI and Happy Agent. Which daemon
@@ -103,15 +183,27 @@ export function useStartSessionFromDraft() {
                 modelMode: rigCreation.defaultModelKey ?? '',
                 effortLevel: rigCreation.defaultEffortForModel(rigCreation.defaultModelKey),
             }
-            : resolveAgentDefaultConfig(defaultOverrides, agentType);
+            : resolveAgentDefaultConfig(defaultOverrides, agentType, machine.metadata?.happyCliVersion);
         const permission = resolveOption<{ key: string }>(
-            rigCreation?.permissionModes ?? getHardcodedPermissionModes(agentType, t),
+            // The daemon machine's CLI is what will parse the mode; older CLIs
+            // drop the whole prompt on modes they do not know (e.g. `auto`).
+            rigCreation?.permissionModes ?? filterPermissionModesForCli(
+                getHardcodedPermissionModes(agentType, t),
+                machine.metadata?.happyCliVersion,
+            ),
+            // The code default last: when the saved and configured modes were
+            // both filtered out for an old CLI, land there rather than on
+            // whichever mode happens to lead the list.
             agentChanged
-                ? [defaults.permissionMode]
-                : [draft.permissionMode, defaults.permissionMode],
+                ? [defaults.permissionMode, rigCreation ? null : getCodeAgentDefaults(agentType, machine.metadata?.happyCliVersion).permissionMode]
+                : [draft.permissionMode, defaults.permissionMode, rigCreation ? null : getCodeAgentDefaults(agentType, machine.metadata?.happyCliVersion).permissionMode],
         );
         const model = resolveOption<{ key: string }>(
-            rigCreation?.models ?? getHardcodedModelModes(agentType, t),
+            rigCreation?.models ?? includeConfiguredModel(
+                agentType,
+                getHardcodedModelModes(agentType, t),
+                defaults.modelMode,
+            ),
             agentChanged
                 ? [defaults.modelMode]
                 : [draft.modelMode, defaults.modelMode],
@@ -135,12 +227,51 @@ export function useStartSessionFromDraft() {
         const attachments = draft.attachments;
         const selectedPath = draft.selectedPath?.trim() || '~';
         const absolutePath = resolveAbsolutePath(selectedPath, machine.metadata?.homeDir);
+        const sessionList = (sessions ?? []).filter((item): item is Session => typeof item !== 'string');
+        const places = collectSessionPlaces({
+            machineIds: choice.machineIds,
+            selectedPath,
+            sessions: sessionList,
+        });
+        const selectedProjectId = places.find((place) => place.path === selectedPath)?.projectId ?? null;
+        const projectWorkspaces = collectSessionWorkspaces({
+            machineIds: choice.machineIds,
+            projectId: selectedProjectId,
+            sessions: sessionList,
+        });
         const requestedWorktree = draft.sessionType === 'worktree'
             ? draft.worktreeKey ?? '__new__'
             : '__none__';
-        // A workspace that already exists is only a directory to start in, so it stands whatever
-        // the machine says about making new ones. Making one is what the capability governs.
-        const worktreeSelection = rigCreation?.supportsWorktrees === false && requestedWorktree === '__new__'
+        let happyAgentTarget: ReturnType<typeof resolveHappyAgentSpawnTarget>;
+        try {
+            happyAgentTarget = rigCreation
+                ? resolveHappyAgentSpawnTarget({
+                    projectId: selectedProjectId,
+                    workspaceSelection: requestedWorktree,
+                    workspaces: projectWorkspaces,
+                })
+                : null;
+        } catch (error) {
+            Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : 'The selected workspace is unavailable',
+            );
+            return false;
+        }
+        const worktreeCreationMachine = happyAgentTarget
+            ? null
+            : resolveWorktreeCreationMachine(
+                choice,
+                agentType,
+                rigCreation?.supportsWorktrees
+                    ?? (agentType === 'rig' ? false : getSupportsWorktree(agentType)),
+            );
+        // Happy Agent creates and selects catalog workspaces by durable identity. The Git RPC is
+        // only for ordinary code-agent worktrees; without either route, a stale draft safely falls
+        // back to the main tree.
+        const worktreeSelection = !happyAgentTarget
+            && !worktreeCreationMachine
+            && requestedWorktree === '__new__'
             ? '__none__'
             : requestedWorktree;
         // Reused across every retry of this exact request so a second press of
@@ -155,18 +286,52 @@ export function useStartSessionFromDraft() {
             effort: effort?.key ?? null,
         }));
 
-        isStartingRef.current = true;
-        setIsStarting(true);
+        const run = beginRun();
+        activeRunRef.current = run;
+        // Stop returns the composer on the next tick, prompt still in it, no
+        // matter what the machine is or is not doing.
+        const untilCanceled = <T,>(work: Promise<T>): Promise<T | typeof CANCELED> =>
+            Promise.race([work, run.signal]);
+        // Only this attempt may drive the display, and only while it is still
+        // the current one: a step finishing late must not raise a spinner over
+        // a composer that has already been handed back.
+        const showPhase = (next: NewSessionStartPhase) => {
+            if (isMountedRef.current && activeRunRef.current === run) setPhase(next);
+        };
+        setPhase(worktreeSelection === '__new__' ? 'worktree' : 'spawning');
+        // A session that arrives after Stop still has to be put down, and by
+        // then nobody is on this screen to do it, so this runs unattended.
+        const stopAbandonedSession = async (createdSessionId: string) => {
+            // The daemon first: it holds the child process and its socket is the
+            // one this session was spawned through. The session's own kill RPC
+            // is tried after, for a session already up and detached from the
+            // daemon, and the archive last so a session nobody can reach still
+            // leaves the active list rather than sitting there as debris.
+            const stopped = await machineStopSession(machine.id, createdSessionId);
+            if (!stopped.success) {
+                const killed = await sessionKill(createdSessionId);
+                if (!killed.success) {
+                    await sessionArchive(createdSessionId);
+                }
+            }
+            await sync.refreshSessions().catch(() => { /* the list catches up on its own */ });
+        };
         try {
             let spawnDirectory = absolutePath;
-            if (worktreeSelection === '__new__') {
-                const worktreeResult = await createWorktree(machine.id, absolutePath);
+            if (worktreeSelection === '__new__' && !happyAgentTarget) {
+                // `worktreeSelection` can only remain `__new__` when a creation
+                // machine was resolved above.
+                const worktreeResult = await untilCanceled(createWorktree(worktreeCreationMachine!.id, absolutePath));
+                // The worktree itself is left wherever git got to: it is a
+                // directory, not a running agent, and the next start offers it.
+                if (worktreeResult === CANCELED) return false;
                 if (!worktreeResult.success) {
                     Modal.alert(t('common.error'), worktreeResult.error || 'Failed to create worktree');
                     return false;
                 }
                 spawnDirectory = worktreeResult.worktreePath;
-            } else if (worktreeSelection !== '__none__') {
+                showPhase('spawning');
+            } else if (worktreeSelection !== '__none__' && worktreeSelection !== '__new__') {
                 spawnDirectory = worktreeSelection;
             }
 
@@ -182,16 +347,16 @@ export function useStartSessionFromDraft() {
                             permissionMode: permission.key,
                             effort: effort?.key,
                         }),
+                        ...(happyAgentTarget ? { happyAgentTarget } : {}),
                     }
                     : {
                         machineId: machine.id,
                         directory: spawnDirectory,
                         approvedNewDirectoryCreation,
                         agent: agentType,
-                        // 'default' means "leave the harness on the mode it is
-                        // already configured with", so it is deliberately not
-                        // sent for any agent.
-                        permissionMode: permission.key !== 'default'
+                        // Codex Default is a concrete ask-first policy, not an
+                        // ambient absence of an override.
+                        permissionMode: agentType === 'codex' || permission.key !== 'default'
                             ? permission.key
                             : undefined,
                         modelMode: model.key !== 'default' ? model.key : undefined,
@@ -205,12 +370,16 @@ export function useStartSessionFromDraft() {
                         result.retryAfterMs,
                         rigCreation?.pendingRetryAfterMs,
                     ));
-                    if (!isMountedRef.current) return null;
+                    if (!isMountedRef.current || run.canceled) return null;
                     result = await machineSpawnNewSession(spawnOptions);
                 }
-                if (!isMountedRef.current) return null;
 
+                // The id comes back even when nobody is waiting on it any
+                // more: a session that was really created is the caller's to
+                // clean up, and it cannot do that without the id.
                 if (result.type === 'success') return result.sessionId;
+                if (!isMountedRef.current || run.canceled) return null;
+
                 if (result.type === 'error') {
                     Modal.alert(t('common.error'), result.errorMessage);
                     return null;
@@ -231,21 +400,45 @@ export function useStartSessionFromDraft() {
                 return approved ? spawn(true) : null;
             };
 
-            const sessionId = await spawn();
+            const spawning = spawn();
+            const spawned = await untilCanceled(spawning);
+            if (spawned === CANCELED) {
+                // The key was already spent by cancelStart, on the tick Stop
+                // was pressed. Nothing to do here but put down whatever the
+                // machine hands back.
+                void spawning
+                    .then((late) => { if (late) return stopAbandonedSession(late); })
+                    .catch(() => { /* the spawn already reported its own failure */ });
+                return false;
+            }
+            const sessionId = spawned;
             if (!sessionId) return false;
             // The idempotency key did its job; the next Start is a new session.
             completeSpawnRequest();
+            showPhase('opening');
 
-            await sync.refreshSessions();
+            if (await untilCanceled(sync.refreshSessions()) === CANCELED) {
+                void stopAbandonedSession(sessionId);
+                return false;
+            }
 
             if (!rigCreation) {
-                const modesPatch: SessionAgentModesPatch = {};
-                if (permission.key !== defaults.permissionMode) modesPatch.permissionMode = permission.key;
-                if (model.key !== defaults.modelMode) modesPatch.modelMode = model.key;
-                if ((effort?.key ?? null) !== defaults.effortLevel) modesPatch.effortLevel = effort?.key ?? null;
-                if (Object.keys(modesPatch).length > 0) {
-                    sessionSetAgentModes(sessionId, modesPatch);
-                }
+                // Pin the actual launch selection to this session. Keeping
+                // defaults as null lets a later settings change rewrite an
+                // existing session's displayed and transmitted mode/model.
+                sessionSetAgentModes(sessionId, {
+                    permissionMode: permission.key,
+                    modelMode: model.key,
+                    effortLevel: effort?.key ?? null,
+                });
+            }
+
+            // Last look before anything becomes irreversible. Past this line the
+            // prompt is cleared, the screen changes, and the message goes out —
+            // a Stop that lands a moment too late must not do all three anyway.
+            if (run.canceled) {
+                void stopAbandonedSession(sessionId);
+                return false;
             }
 
             draft.setInput('');
@@ -264,16 +457,24 @@ export function useStartSessionFromDraft() {
             }
             return true;
         } catch (error) {
-            Modal.alert(
-                t('common.error'),
-                error instanceof Error ? error.message : 'Failed to start session',
-            );
+            // A failure the user already walked away from is not news.
+            if (!run.canceled) {
+                Modal.alert(
+                    t('common.error'),
+                    error instanceof Error ? error.message : 'Failed to start session',
+                );
+            }
             return false;
         } finally {
-            isStartingRef.current = false;
-            if (isMountedRef.current) setIsStarting(false);
+            // Only if this attempt is still the current one. A canceled attempt
+            // gave up its claim the moment Stop was pressed, and a newer Start
+            // may already own the composer by the time this line is reached.
+            if (activeRunRef.current === run) {
+                activeRunRef.current = null;
+                if (isMountedRef.current) setPhase(null);
+            }
         }
-    }, [defaultOverrides, machines, navigateToSession]);
+    }, [defaultOverrides, machines, navigateToSession, sessions]);
 
-    return { isStarting, startSession };
+    return { isStarting: phase !== null, phase, startSession, cancelStart };
 }

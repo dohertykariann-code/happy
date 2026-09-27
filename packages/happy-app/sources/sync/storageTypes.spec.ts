@@ -3,6 +3,14 @@ import { AgentGoalStatusSchema, AgentStateSchema, MachineMetadataSchema, Metadat
 import { rigMetadataFixture } from './__testdata__/rigMetadata';
 
 describe('MetadataSchema', () => {
+    it('reads bot identity without requiring a project and retains additive fields', () => {
+        const bot = { id: 'bot-1', name: 'Assistant', username: 'assistant', workspaceId: 'bot-workspace', orderKey: '1', futureField: true };
+        const parsed = MetadataSchema.parse({ ...rigMetadataFixture, bot, project: undefined, workspace: undefined });
+        expect(parsed.bot).toEqual(bot);
+        expect(parsed.project).toBeUndefined();
+        expect(MetadataSchema.parse(rigMetadataFixture).bot).toBeUndefined();
+    });
+
     it('preserves archive lifecycle metadata', () => {
         const metadata = MetadataSchema.parse({
             path: '/tmp/project',
@@ -54,6 +62,7 @@ describe('MachineMetadataSchema', () => {
                 gemini: false,
                 openclaw: false,
                 agy: false,
+                openhands: true,
                 rig: true,
                 detectedAt: 123,
             },
@@ -93,6 +102,7 @@ describe('MachineMetadataSchema', () => {
         });
 
         expect(metadata.cliAvailability?.rig).toBe(true);
+        expect(metadata.cliAvailability?.openhands).toBe(true);
         expect(metadata.defaults?.providerId).toBe('codex');
         expect(metadata.models?.[0]?.thinkingLevels).toEqual(['low', 'high']);
         expect((metadata as any).futureRigMachineField).toEqual({ enabled: true });
