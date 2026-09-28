@@ -12,6 +12,7 @@ import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
+import { detectClaudeModels, stopClaudeModelProbe } from '@/utils/detectClaudeModels';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
 import { shouldReconnect } from '@/utils/lidState';
 import { getProjectPath } from '@/claude/utils/path';
@@ -117,6 +118,7 @@ export class ApiMachineClient {
     private keepAliveInterval: NodeJS.Timeout | null = null;
     private lastKnownCLIAvailability: CLIAvailability | null = null;
     private lastKnownResumeSupport: ResumeSupport | null = null;
+    private claudeModelProbeStarted = false;
     private rpcHandlerManager: RpcHandlerManager;
     private resumeSessionHandler: ((sessionId: string, options?: { model?: string; permissionMode?: string }) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
@@ -459,6 +461,7 @@ export class ApiMachineClient {
             this.rpcHandlerManager.onSocketConnect(this.socket);
             this.syncResumeSessionRpcRegistration();
             this.startKeepAlive();
+            this.startClaudeModelProbe();
         });
 
         this.socket.on('disconnect', (reason) => {
@@ -567,6 +570,23 @@ export class ApiMachineClient {
         logger.debug('[API MACHINE] Keep-alive started (20s interval)');
     }
 
+    private startClaudeModelProbe() {
+        if (this.claudeModelProbeStarted) return;
+        this.claudeModelProbeStarted = true;
+
+        // The Agent SDK starts a real Claude process to initialize. Keep that
+        // handshake entirely off the connection and session-creation paths.
+        void detectClaudeModels().then((claudeModels) => {
+            if (!claudeModels) return;
+            return this.updateMachineMetadata((metadata) => ({
+                ...(metadata || {} as any),
+                claudeModels,
+            }));
+        }).catch((error) => {
+            logger.debug('[API MACHINE] Failed to publish Claude model capabilities:', error);
+        });
+    }
+
     private startSmartReconnect() {
         if (this.reconnectInterval) return;
 
@@ -600,6 +620,7 @@ export class ApiMachineClient {
 
     shutdown() {
         logger.debug('[API MACHINE] Shutting down');
+        stopClaudeModelProbe();
         this.stopKeepAlive();
         if (this.reconnectInterval) {
             clearInterval(this.reconnectInterval);

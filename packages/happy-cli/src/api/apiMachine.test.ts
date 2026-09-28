@@ -4,10 +4,14 @@ import type { Machine } from './types';
 
 const {
     mockIo,
-    mockShouldReconnect
+    mockShouldReconnect,
+    mockDetectClaudeModels,
+    mockStopClaudeModelProbe,
 } = vi.hoisted(() => ({
     mockIo: vi.fn(),
-    mockShouldReconnect: vi.fn(() => true)
+    mockShouldReconnect: vi.fn(() => true),
+    mockDetectClaudeModels: vi.fn(),
+    mockStopClaudeModelProbe: vi.fn(),
 }));
 
 vi.mock('socket.io-client', () => ({
@@ -50,6 +54,11 @@ vi.mock('@/utils/detectCLI', () => ({
         gemini: false,
         openclaw: false
     }))
+}));
+
+vi.mock('@/utils/detectClaudeModels', () => ({
+    detectClaudeModels: mockDetectClaudeModels,
+    stopClaudeModelProbe: mockStopClaudeModelProbe,
 }));
 
 vi.mock('@/resume/localHappyAgentAuth', () => ({
@@ -98,6 +107,7 @@ describe('ApiMachineClient socket reconnection', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        mockDetectClaudeModels.mockResolvedValue(undefined);
         mockShouldReconnect.mockReturnValue(true);
         socketHandlers = {};
         mockSocket = {
@@ -202,5 +212,38 @@ describe('ApiMachineClient socket reconnection', () => {
         }));
 
         client.shutdown();
+    });
+
+    it('starts the Claude model probe without awaiting socket startup, then publishes its result', async () => {
+        let resolveModels: ((models: Array<any>) => void) | undefined;
+        mockDetectClaudeModels.mockReturnValue(new Promise((resolve) => {
+            resolveModels = resolve;
+        }));
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        const update = vi.spyOn(client, 'updateMachineMetadata').mockImplementation(async (handler) => {
+            handler(makeMachine().metadata);
+        });
+        client.connect();
+
+        emitSocketEvent('connect');
+
+        expect(mockDetectClaudeModels).toHaveBeenCalledTimes(1);
+        const updatesBeforeProbeResolves = update.mock.calls.length;
+
+        resolveModels?.([{
+            value: 'claude-opus-5',
+            displayName: 'Opus 5',
+            description: 'Most capable',
+        }]);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(update.mock.calls).toHaveLength(updatesBeforeProbeResolves + 1);
+        const modelUpdate = update.mock.calls.at(-1)?.[0];
+        expect(modelUpdate?.(makeMachine().metadata)).toMatchObject({
+            claudeModels: [{ value: 'claude-opus-5' }],
+        });
+        client.shutdown();
+        expect(mockStopClaudeModelProbe).toHaveBeenCalledTimes(1);
     });
 });

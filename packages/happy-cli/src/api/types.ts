@@ -153,6 +153,19 @@ export const MachineMetadataSchema = z.object({
     openhands: z.boolean().optional(),
     detectedAt: z.number(),
   }).optional(),
+  // Optional so metadata written by an older CLI, an offline machine, or a
+  // CLI whose model probe failed remains readable. Consumers must fall back
+  // instead of treating absence as an empty model catalog.
+  claudeModels: z.array(z.object({
+    value: z.string(),
+    resolvedModel: z.string().optional(),
+    displayName: z.string(),
+    description: z.string(),
+    supportsEffort: z.boolean().optional(),
+    supportedEffortLevels: z.array(z.string()).optional(),
+    supportsAdaptiveThinking: z.boolean().optional(),
+    supportsFastMode: z.boolean().optional(),
+  })).optional().catch(undefined),
   resumeSupport: z.object({
     rpcAvailable: z.boolean(),
     requiresSameMachine: z.boolean(),

@@ -459,6 +459,18 @@ export const MachineMetadataSchema = z.object({
         rig: z.boolean().optional(), // Rig runs its own Happy-connected daemon
         detectedAt: z.number(),
     }).optional(),
+    // Optional: older CLIs, offline machines, and failed asynchronous probes
+    // do not report this. Claude pickers retain their hardcoded fallback.
+    claudeModels: z.array(z.object({
+        value: z.string(),
+        resolvedModel: z.string().optional(),
+        displayName: z.string(),
+        description: z.string(),
+        supportsEffort: z.boolean().optional(),
+        supportedEffortLevels: z.array(z.string()).optional(),
+        supportsAdaptiveThinking: z.boolean().optional(),
+        supportsFastMode: z.boolean().optional(),
+    })).optional().catch(undefined),
     // Rig registers as its own machine instead of being launched by happy-cli.
     // Keep its creation catalog so the new-session UI can send Rig-native
     // provider/model identifiers to the machine RPC.

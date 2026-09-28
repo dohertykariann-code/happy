@@ -45,6 +45,27 @@ describe('MetadataSchema', () => {
 });
 
 describe('MachineMetadataSchema', () => {
+    it('accepts both absent and CLI-verified Claude model metadata', () => {
+        const base = {
+            host: 'workstation',
+            platform: 'darwin',
+            happyCliVersion: '1.2.3',
+            happyHomeDir: '/Users/dev/.happy',
+            homeDir: '/Users/dev',
+        };
+
+        expect(MachineMetadataSchema.parse(base).claudeModels).toBeUndefined();
+        expect(MachineMetadataSchema.parse({
+            ...base,
+            claudeModels: [{
+                value: 'claude-opus-5',
+                resolvedModel: 'claude-opus-5',
+                displayName: 'Opus 5',
+                description: 'Most capable',
+            }],
+        }).claudeModels?.[0]?.displayName).toBe('Opus 5');
+    });
+
     it('preserves the Rig creation catalog and future machine fields', () => {
         const metadata = MachineMetadataSchema.parse({
             host: 'workstation',
