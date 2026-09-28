@@ -182,6 +182,13 @@ export const MachineMetadataSchema = z.object({
       description: z.string(),
     })),
   })).optional().catch(undefined),
+  // Optional so metadata written by an older CLI, an offline machine, or a
+  // CLI whose model probe failed remains readable. Consumers must fall back
+  // instead of treating absence as an empty model catalog.
+  deepInfraModels: z.array(z.object({
+    id: z.string(),
+    displayName: z.string(),
+  })).optional().catch(undefined),
   resumeSupport: z.object({
     rpcAvailable: z.boolean(),
     requiresSameMachine: z.boolean(),

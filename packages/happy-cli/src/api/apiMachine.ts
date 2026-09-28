@@ -14,6 +14,7 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectClaudeModels, stopClaudeModelProbe } from '@/utils/detectClaudeModels';
 import { detectCodexModels, stopCodexModelProbe } from '@/utils/detectCodexModels';
+import { detectDeepInfraModels, stopDeepInfraModelProbe } from '@/utils/detectDeepInfraModels';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
 import { shouldReconnect } from '@/utils/lidState';
 import { getProjectPath } from '@/claude/utils/path';
@@ -121,6 +122,7 @@ export class ApiMachineClient {
     private lastKnownResumeSupport: ResumeSupport | null = null;
     private claudeModelProbeStarted = false;
     private codexModelProbeStarted = false;
+    private deepInfraModelProbeStarted = false;
     private rpcHandlerManager: RpcHandlerManager;
     private resumeSessionHandler: ((sessionId: string, options?: { model?: string; permissionMode?: string }) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
@@ -465,6 +467,7 @@ export class ApiMachineClient {
             this.startKeepAlive();
             this.startClaudeModelProbe();
             this.startCodexModelProbe();
+            this.startDeepInfraModelProbe();
         });
 
         this.socket.on('disconnect', (reason) => {
@@ -607,6 +610,23 @@ export class ApiMachineClient {
         });
     }
 
+    private startDeepInfraModelProbe() {
+        if (this.deepInfraModelProbeStarted) return;
+        this.deepInfraModelProbeStarted = true;
+
+        // This is a public HTTP catalog request; keep it off connection and
+        // session-creation paths just like the installed-CLI probes above.
+        void detectDeepInfraModels().then((deepInfraModels) => {
+            if (!deepInfraModels) return;
+            return this.updateMachineMetadata((metadata) => ({
+                ...(metadata || {} as any),
+                deepInfraModels,
+            }));
+        }).catch((error) => {
+            logger.debug('[API MACHINE] Failed to publish DeepInfra model capabilities:', error);
+        });
+    }
+
     private startSmartReconnect() {
         if (this.reconnectInterval) return;
 
@@ -642,6 +662,7 @@ export class ApiMachineClient {
         logger.debug('[API MACHINE] Shutting down');
         stopClaudeModelProbe();
         stopCodexModelProbe();
+        stopDeepInfraModelProbe();
         this.stopKeepAlive();
         if (this.reconnectInterval) {
             clearInterval(this.reconnectInterval);

@@ -54,4 +54,17 @@ describe('MachineMetadataSchema', () => {
 
     expect(metadata.codexModels?.[0]?.model).toBe('gpt-6-astra');
   });
+
+  it('accepts metadata from CLI versions that do not report DeepInfra models', () => {
+    expect(MachineMetadataSchema.parse(oldMachineMetadata).deepInfraModels).toBeUndefined();
+  });
+
+  it('accepts a CLI-verified DeepInfra model list', () => {
+    const metadata = MachineMetadataSchema.parse({
+      ...oldMachineMetadata,
+      deepInfraModels: [{ id: 'openai/zai-org/GLM-5.2', displayName: 'GLM-5.2' }],
+    });
+
+    expect(metadata.deepInfraModels?.[0]?.id).toBe('openai/zai-org/GLM-5.2');
+  });
 });

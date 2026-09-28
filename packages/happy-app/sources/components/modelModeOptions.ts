@@ -106,6 +106,11 @@ type CodexModelOption = {
     }>;
 };
 
+export type DeepInfraModelOption = {
+    id: string;
+    displayName: string;
+};
+
 const GEMINI_MODEL_FALLBACKS: ModelMode[] = [
     { key: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', description: 'latest & most capable' },
     { key: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', description: 'latest & fast' },
@@ -383,9 +388,22 @@ export function getOpenClawModelModes(): ModelMode[] {
     ];
 }
 
-function getOpenHandsModelModes(flavor: AgentFlavor): ModelMode[] {
+function getOpenHandsModelModes(
+    flavor: AgentFlavor,
+    deepInfraModels?: readonly DeepInfraModelOption[] | null,
+): ModelMode[] {
     if (flavor === 'openhands_local') {
         return [{ key: 'ollama/qwen2.5:14b', name: 'Qwen 2.5 14B (Local)', description: null }];
+    }
+    if (deepInfraModels && deepInfraModels.length > 0) {
+        return deepInfraModels.map((model) => ({
+            key: model.id,
+            name: model.displayName,
+            description: null,
+            modelId: model.id,
+            providerId: 'deepinfra',
+            providerName: 'DeepInfra',
+        }));
     }
     return [{ key: 'openai/deepseek-ai/DeepSeek-V4-Flash', name: 'DeepSeek V4 Flash (DeepInfra)', description: null }];
 }
@@ -402,7 +420,11 @@ export function getAgyModelModes(): ModelMode[] {
     ];
 }
 
-export function getHardcodedModelModes(flavor: AgentFlavor, _translate: Translate): ModelMode[] {
+export function getHardcodedModelModes(
+    flavor: AgentFlavor,
+    _translate: Translate,
+    deepInfraModels?: readonly DeepInfraModelOption[] | null,
+): ModelMode[] {
     if (flavor === 'codex') {
         return getCodexModelModes();
     }
@@ -416,7 +438,7 @@ export function getHardcodedModelModes(flavor: AgentFlavor, _translate: Translat
         return getAgyModelModes();
     }
     if (flavor === 'openhands_local' || flavor === 'openhands_deepinfra') {
-        return getOpenHandsModelModes(flavor);
+        return getOpenHandsModelModes(flavor, deepInfraModels);
     }
     return getClaudeModelModes();
 }
@@ -428,6 +450,7 @@ export function getAvailableModels(
     selectedKey?: string | null,
     claudeModels?: readonly ClaudeModelOption[] | null,
     codexModels?: readonly CodexModelOption[] | null,
+    deepInfraModels?: readonly DeepInfraModelOption[] | null,
 ): ModelMode[] {
     if (isRigMetadataV1(metadata)) {
         const models: ModelMode[] = sortRigModelsForPicker(getRigModels(metadata)).map((model) => ({
@@ -491,7 +514,7 @@ export function getAvailableModels(
             ? getClaudeModelModes(claudeModels)
             : flavor === 'codex'
                 ? getCodexModelModes(codexModels)
-                : getHardcodedModelModes(flavor, translate),
+                : getHardcodedModelModes(flavor, translate, deepInfraModels),
         selectedKey,
     );
 }

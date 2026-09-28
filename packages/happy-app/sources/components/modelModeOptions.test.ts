@@ -127,6 +127,20 @@ describe('modelModeOptions', () => {
         expect(getHardcodedModelModes('openhands_deepinfra', translate).map((mode) => mode.key)).toEqual(['openai/deepseek-ai/DeepSeek-V4-Flash']);
     });
 
+    it('renders live DeepInfra models but retains the fallback when metadata is absent or empty', () => {
+        const liveModels = [
+            { id: 'openai/deepseek-ai/DeepSeek-V4-Flash', displayName: 'DeepSeek V4 Flash' },
+            { id: 'openai/zai-org/GLM-5.2', displayName: 'GLM-5.2' },
+        ];
+
+        expect(getAvailableModels('openhands_deepinfra', null, translate, undefined, undefined, undefined, liveModels)).toEqual([
+            { key: 'openai/deepseek-ai/DeepSeek-V4-Flash', name: 'DeepSeek V4 Flash', description: null, modelId: 'openai/deepseek-ai/DeepSeek-V4-Flash', providerId: 'deepinfra', providerName: 'DeepInfra' },
+            { key: 'openai/zai-org/GLM-5.2', name: 'GLM-5.2', description: null, modelId: 'openai/zai-org/GLM-5.2', providerId: 'deepinfra', providerName: 'DeepInfra' },
+        ]);
+        expect(getHardcodedModelModes('openhands_deepinfra', translate, []).map((model) => model.key)).toEqual(['openai/deepseek-ai/DeepSeek-V4-Flash']);
+        expect(getHardcodedModelModes('openhands_local', translate, liveModels).map((model) => model.key)).toEqual(['ollama/qwen2.5:14b']);
+    });
+
     it('only offers the curated codex harness models, most capable first', () => {
         const models = getCodexModelModes();
         expect(models.map((model) => model.key)).toEqual([
