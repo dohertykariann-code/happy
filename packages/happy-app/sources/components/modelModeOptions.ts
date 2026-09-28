@@ -197,11 +197,38 @@ export function getGeminiPermissionModes(translate: Translate): PermissionMode[]
 // the model ID Claude Code accepts (`claude --model 'claude-opus-5[1m]'`) and
 // selects the 1M-context variant; unknown bracket models are rejected, so the
 // suffix is honored rather than silently dropped (#1721).
+// Anthropic's own displayName is generic ("Opus", "Opus (1M context)") and
+// carries no version, so it goes stale the moment a new Opus/Sonnet/Fable
+// ships even though the CLI's live catalog already resolved to the real
+// versioned model. resolvedModel does carry the version (e.g.
+// "claude-haiku-4-5-20251001", "claude-fable-5-1"), so the picker label is
+// built from that instead, matching the same "Family N.N" convention as the
+// hardcoded fallback above. The `default` row is left alone: it means
+// "let Claude pick", a distinct concept from naming one specific model, and
+// relabeling it would just duplicate whichever model it currently resolves to.
+function formatResolvedModelName(resolvedModel: string): string {
+    const bracketMatch = resolvedModel.match(/\[([^\]]+)\]$/);
+    const suffix = bracketMatch ? ` [${bracketMatch[1].toUpperCase()}]` : '';
+    const withoutBracket = bracketMatch ? resolvedModel.slice(0, bracketMatch.index) : resolvedModel;
+    const withoutDate = withoutBracket.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+    const [family, ...version] = withoutDate.split('-');
+    if (!family) return resolvedModel;
+    const name = family.charAt(0).toUpperCase() + family.slice(1);
+    return version.length > 0 ? `${name} ${version.join('.')}${suffix}` : `${name}${suffix}`;
+}
+
+function claudeModelDisplayName(model: ClaudeModelOption): string {
+    if (model.value === 'default' || !model.resolvedModel) {
+        return model.displayName;
+    }
+    return formatResolvedModelName(model.resolvedModel);
+}
+
 export function getClaudeModelModes(claudeModels?: readonly ClaudeModelOption[] | null): ModelMode[] {
     if (claudeModels && claudeModels.length > 0) {
         return claudeModels.map((model) => ({
             key: model.value,
-            name: model.displayName,
+            name: claudeModelDisplayName(model),
             description: model.description,
             modelId: model.resolvedModel,
             providerId: 'anthropic',

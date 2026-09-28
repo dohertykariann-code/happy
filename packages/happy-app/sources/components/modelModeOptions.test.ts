@@ -210,6 +210,52 @@ describe('modelModeOptions', () => {
         ]);
     });
 
+    it('derives a versioned label from resolvedModel when displayName is generic', () => {
+        expect(getClaudeModelModes([
+            {
+                value: 'opus[1m]',
+                resolvedModel: 'claude-opus-5[1m]',
+                displayName: 'Opus (1M context)',
+                description: 'Opus 5 with 1M context, best for everyday, complex tasks',
+                supportsEffort: true,
+            },
+            {
+                value: 'haiku',
+                resolvedModel: 'claude-haiku-4-5-20251001',
+                displayName: 'Haiku',
+                description: 'Haiku 4.5, fastest for quick answers',
+            },
+            {
+                value: 'default',
+                resolvedModel: 'claude-opus-5[1m]',
+                displayName: 'Default (recommended)',
+                description: 'Opus 5 with 1M context, best for everyday, complex tasks',
+                supportsEffort: true,
+            },
+        ]).map((model) => model.name)).toEqual([
+            'Opus 5 [1M]',
+            'Haiku 4.5',
+            'Default (recommended)',
+        ]);
+        expect(getClaudeModelModes([
+            {
+                value: 'fable',
+                resolvedModel: 'claude-fable-5-1',
+                displayName: 'Fable',
+                description: 'Fable 5.1',
+            },
+            {
+                value: 'sonnet',
+                resolvedModel: 'claude-sonnet-5',
+                displayName: 'Sonnet',
+                description: 'Sonnet 5',
+            },
+        ]).map((model) => model.name)).toEqual([
+            'Fable 5.1',
+            'Sonnet 5',
+        ]);
+    });
+
     it('keeps the hardcoded Claude catalog when live metadata is absent', () => {
         expect(getClaudeModelModes(undefined).map((model) => model.key)).toEqual([
             'claude-fable-5-1',
