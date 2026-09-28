@@ -206,6 +206,49 @@ describe('modelModeOptions', () => {
         ]);
     });
 
+    it('renders CLI-verified Codex models and excludes hidden rows', () => {
+        expect(getCodexModelModes([
+            {
+                id: 'gpt-6-astra',
+                model: 'gpt-6-astra',
+                displayName: 'GPT-6 Astra',
+                description: 'Most capable',
+                hidden: false,
+                isDefault: true,
+                defaultReasoningEffort: 'medium',
+                supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Balanced' }],
+            },
+            {
+                id: 'internal',
+                model: 'internal',
+                displayName: 'Internal',
+                description: 'Not for picker',
+                hidden: true,
+                isDefault: false,
+                defaultReasoningEffort: 'low',
+                supportedReasoningEfforts: [],
+            },
+        ])).toEqual([
+            {
+                key: 'gpt-6-astra',
+                name: 'GPT-6 Astra',
+                description: 'Most capable',
+                modelId: 'gpt-6-astra',
+                providerId: 'openai',
+                providerName: 'OpenAI',
+            },
+        ]);
+    });
+
+    it('keeps the hardcoded Codex catalog when live metadata is absent', () => {
+        expect(getCodexModelModes(undefined).map((model) => model.key)).toEqual([
+            'gpt-6-astra',
+            'gpt-5.6-sol',
+            'gpt-5.6-terra',
+            'gpt-5.6-luna',
+        ]);
+    });
+
     it('offers every codex model the levels its own registry publishes', () => {
         // Straight from Codex's model registry: astra, sol, and terra publish
         // ultra, luna does not. The difference is the whole point of asking

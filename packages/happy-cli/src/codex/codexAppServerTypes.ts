@@ -184,6 +184,39 @@ export type ReadConversationResponse = {
     thread: Thread;
 };
 
+export type ModelListParams = {
+    cursor?: string | null;
+    includeHidden?: boolean | null;
+    limit?: number | null;
+};
+
+export type Model = {
+    id: string;
+    model: string;
+    displayName: string;
+    description: string;
+    hidden: boolean;
+    isDefault: boolean;
+    defaultReasoningEffort: string;
+    supportedReasoningEfforts: Array<{
+        reasoningEffort: string;
+        description: string;
+    }>;
+    upgrade?: string | null;
+    upgradeInfo?: {
+        model: string;
+        migrationMarkdown?: string | null;
+        modelLink?: string | null;
+        retirementAt?: number | null;
+        upgradeCopy?: string | null;
+    } | null;
+};
+
+export type ModelListResponse = {
+    data: Model[];
+    nextCursor: string | null;
+};
+
 export type RollbackConversationParams = {
     threadId: ThreadId;
     numTurns: number;

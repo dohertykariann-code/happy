@@ -27,6 +27,8 @@ import type {
     ForkConversationResponse,
     ReadConversationParams,
     ReadConversationResponse,
+    ModelListParams,
+    ModelListResponse,
     RollbackConversationParams,
     RollbackConversationResponse,
     InjectItemsParams,
@@ -906,6 +908,19 @@ export class CodexAppServerClient {
             includeTurns: opts.includeTurns ?? true,
         };
         return await this.request('thread/read', params) as ReadConversationResponse;
+    }
+
+    async listModels(opts: {
+        cursor?: string;
+        includeHidden?: boolean;
+        limit?: number;
+    } = {}): Promise<ModelListResponse> {
+        const params: ModelListParams = {
+            ...(opts.cursor !== undefined ? { cursor: opts.cursor } : {}),
+            ...(opts.includeHidden !== undefined ? { includeHidden: opts.includeHidden } : {}),
+            ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+        };
+        return await this.request('model/list', params) as ModelListResponse;
     }
 
     async rollbackThread(opts: {

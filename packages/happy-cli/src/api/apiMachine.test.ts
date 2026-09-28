@@ -7,11 +7,15 @@ const {
     mockShouldReconnect,
     mockDetectClaudeModels,
     mockStopClaudeModelProbe,
+    mockDetectCodexModels,
+    mockStopCodexModelProbe,
 } = vi.hoisted(() => ({
     mockIo: vi.fn(),
     mockShouldReconnect: vi.fn(() => true),
     mockDetectClaudeModels: vi.fn(),
     mockStopClaudeModelProbe: vi.fn(),
+    mockDetectCodexModels: vi.fn(),
+    mockStopCodexModelProbe: vi.fn(),
 }));
 
 vi.mock('socket.io-client', () => ({
@@ -61,6 +65,11 @@ vi.mock('@/utils/detectClaudeModels', () => ({
     stopClaudeModelProbe: mockStopClaudeModelProbe,
 }));
 
+vi.mock('@/utils/detectCodexModels', () => ({
+    detectCodexModels: mockDetectCodexModels,
+    stopCodexModelProbe: mockStopCodexModelProbe,
+}));
+
 vi.mock('@/resume/localHappyAgentAuth', () => ({
     detectResumeSupport: vi.fn(() => ({
         rpcAvailable: false,
@@ -108,6 +117,7 @@ describe('ApiMachineClient socket reconnection', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockDetectClaudeModels.mockResolvedValue(undefined);
+        mockDetectCodexModels.mockResolvedValue(undefined);
         mockShouldReconnect.mockReturnValue(true);
         socketHandlers = {};
         mockSocket = {
@@ -245,5 +255,43 @@ describe('ApiMachineClient socket reconnection', () => {
         });
         client.shutdown();
         expect(mockStopClaudeModelProbe).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts the Codex model probe without awaiting socket startup, then publishes its result', async () => {
+        let resolveModels: ((models: Array<any>) => void) | undefined;
+        mockDetectCodexModels.mockReturnValue(new Promise((resolve) => {
+            resolveModels = resolve;
+        }));
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        const update = vi.spyOn(client, 'updateMachineMetadata').mockImplementation(async (handler) => {
+            handler(makeMachine().metadata);
+        });
+        client.connect();
+
+        emitSocketEvent('connect');
+
+        expect(mockDetectCodexModels).toHaveBeenCalledTimes(1);
+        const updatesBeforeProbeResolves = update.mock.calls.length;
+
+        resolveModels?.([{
+            id: 'gpt-6-astra',
+            model: 'gpt-6-astra',
+            displayName: 'GPT-6 Astra',
+            description: 'Most capable',
+            hidden: false,
+            isDefault: true,
+            defaultReasoningEffort: 'medium',
+            supportedReasoningEfforts: [],
+        }]);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(update.mock.calls).toHaveLength(updatesBeforeProbeResolves + 1);
+        const modelUpdate = update.mock.calls.at(-1)?.[0];
+        expect(modelUpdate?.(makeMachine().metadata)).toMatchObject({
+            codexModels: [{ model: 'gpt-6-astra' }],
+        });
+        client.shutdown();
+        expect(mockStopCodexModelProbe).toHaveBeenCalledTimes(1);
     });
 });

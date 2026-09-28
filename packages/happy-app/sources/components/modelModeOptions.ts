@@ -92,6 +92,20 @@ type ClaudeModelOption = {
     supportsFastMode?: boolean;
 };
 
+type CodexModelOption = {
+    id: string;
+    model: string;
+    displayName: string;
+    description: string;
+    hidden: boolean;
+    isDefault: boolean;
+    defaultReasoningEffort: string;
+    supportedReasoningEfforts: Array<{
+        reasoningEffort: string;
+        description: string;
+    }>;
+};
+
 const GEMINI_MODEL_FALLBACKS: ModelMode[] = [
     { key: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro', description: 'latest & most capable' },
     { key: 'gemini-3-flash-preview', name: 'Gemini 3 Flash', description: 'latest & fast' },
@@ -198,7 +212,17 @@ export function getClaudeModelModes(claudeModels?: readonly ClaudeModelOption[] 
     ];
 }
 
-export function getCodexModelModes(): ModelMode[] {
+export function getCodexModelModes(codexModels?: readonly CodexModelOption[] | null): ModelMode[] {
+    if (codexModels && codexModels.length > 0) {
+        return codexModels.filter((model) => !model.hidden).map((model) => ({
+            key: model.model,
+            name: model.displayName,
+            description: model.description,
+            modelId: model.model,
+            providerId: 'openai',
+            providerName: 'OpenAI',
+        }));
+    }
     return [
         { key: 'gpt-6-astra', name: 'GPT-6 Astra', description: 'most capable', providerId: 'openai', providerName: 'OpenAI' },
         { key: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', description: null, providerId: 'openai', providerName: 'OpenAI' },
@@ -403,6 +427,7 @@ export function getAvailableModels(
     translate: Translate,
     selectedKey?: string | null,
     claudeModels?: readonly ClaudeModelOption[] | null,
+    codexModels?: readonly CodexModelOption[] | null,
 ): ModelMode[] {
     if (isRigMetadataV1(metadata)) {
         const models: ModelMode[] = sortRigModelsForPicker(getRigModels(metadata)).map((model) => ({
@@ -462,7 +487,11 @@ export function getAvailableModels(
     }
     return includeConfiguredModel(
         flavor,
-        flavor === 'claude' ? getClaudeModelModes(claudeModels) : getHardcodedModelModes(flavor, translate),
+        flavor === 'claude'
+            ? getClaudeModelModes(claudeModels)
+            : flavor === 'codex'
+                ? getCodexModelModes(codexModels)
+                : getHardcodedModelModes(flavor, translate),
         selectedKey,
     );
 }

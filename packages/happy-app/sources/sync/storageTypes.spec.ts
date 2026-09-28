@@ -66,6 +66,31 @@ describe('MachineMetadataSchema', () => {
         }).claudeModels?.[0]?.displayName).toBe('Opus 5');
     });
 
+    it('accepts both absent and CLI-verified Codex model metadata', () => {
+        const base = {
+            host: 'workstation',
+            platform: 'darwin',
+            happyCliVersion: '1.2.3',
+            happyHomeDir: '/Users/dev/.happy',
+            homeDir: '/Users/dev',
+        };
+
+        expect(MachineMetadataSchema.parse(base).codexModels).toBeUndefined();
+        expect(MachineMetadataSchema.parse({
+            ...base,
+            codexModels: [{
+                id: 'gpt-6-astra',
+                model: 'gpt-6-astra',
+                displayName: 'GPT-6 Astra',
+                description: 'Most capable',
+                hidden: false,
+                isDefault: true,
+                defaultReasoningEffort: 'medium',
+                supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Balanced' }],
+            }],
+        }).codexModels?.[0]?.displayName).toBe('GPT-6 Astra');
+    });
+
     it('preserves the Rig creation catalog and future machine fields', () => {
         const metadata = MachineMetadataSchema.parse({
             host: 'workstation',

@@ -32,4 +32,26 @@ describe('MachineMetadataSchema', () => {
 
     expect(metadata.claudeModels?.[0]?.value).toBe('claude-opus-5');
   });
+
+  it('accepts metadata from CLI versions that do not report Codex models', () => {
+    expect(MachineMetadataSchema.parse(oldMachineMetadata).codexModels).toBeUndefined();
+  });
+
+  it('accepts a CLI-verified Codex model list', () => {
+    const metadata = MachineMetadataSchema.parse({
+      ...oldMachineMetadata,
+      codexModels: [{
+        id: 'gpt-6-astra',
+        model: 'gpt-6-astra',
+        displayName: 'GPT-6 Astra',
+        description: 'Most capable',
+        hidden: false,
+        isDefault: true,
+        defaultReasoningEffort: 'medium',
+        supportedReasoningEfforts: [{ reasoningEffort: 'medium', description: 'Balanced' }],
+      }],
+    });
+
+    expect(metadata.codexModels?.[0]?.model).toBe('gpt-6-astra');
+  });
 });

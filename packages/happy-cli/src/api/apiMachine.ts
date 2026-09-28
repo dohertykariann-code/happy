@@ -13,6 +13,7 @@ import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectClaudeModels, stopClaudeModelProbe } from '@/utils/detectClaudeModels';
+import { detectCodexModels, stopCodexModelProbe } from '@/utils/detectCodexModels';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
 import { shouldReconnect } from '@/utils/lidState';
 import { getProjectPath } from '@/claude/utils/path';
@@ -119,6 +120,7 @@ export class ApiMachineClient {
     private lastKnownCLIAvailability: CLIAvailability | null = null;
     private lastKnownResumeSupport: ResumeSupport | null = null;
     private claudeModelProbeStarted = false;
+    private codexModelProbeStarted = false;
     private rpcHandlerManager: RpcHandlerManager;
     private resumeSessionHandler: ((sessionId: string, options?: { model?: string; permissionMode?: string }) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
@@ -462,6 +464,7 @@ export class ApiMachineClient {
             this.syncResumeSessionRpcRegistration();
             this.startKeepAlive();
             this.startClaudeModelProbe();
+            this.startCodexModelProbe();
         });
 
         this.socket.on('disconnect', (reason) => {
@@ -587,6 +590,23 @@ export class ApiMachineClient {
         });
     }
 
+    private startCodexModelProbe() {
+        if (this.codexModelProbeStarted) return;
+        this.codexModelProbeStarted = true;
+
+        // Codex app-server starts a real Codex process to initialize. Keep
+        // that handshake entirely off the connection and session-creation paths.
+        void detectCodexModels().then((codexModels) => {
+            if (!codexModels) return;
+            return this.updateMachineMetadata((metadata) => ({
+                ...(metadata || {} as any),
+                codexModels,
+            }));
+        }).catch((error) => {
+            logger.debug('[API MACHINE] Failed to publish Codex model capabilities:', error);
+        });
+    }
+
     private startSmartReconnect() {
         if (this.reconnectInterval) return;
 
@@ -621,6 +641,7 @@ export class ApiMachineClient {
     shutdown() {
         logger.debug('[API MACHINE] Shutting down');
         stopClaudeModelProbe();
+        stopCodexModelProbe();
         this.stopKeepAlive();
         if (this.reconnectInterval) {
             clearInterval(this.reconnectInterval);

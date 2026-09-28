@@ -166,6 +166,22 @@ export const MachineMetadataSchema = z.object({
     supportsAdaptiveThinking: z.boolean().optional(),
     supportsFastMode: z.boolean().optional(),
   })).optional().catch(undefined),
+  // Optional so metadata written by an older CLI, an offline machine, or a
+  // CLI whose model probe failed remains readable. Consumers must fall back
+  // instead of treating absence as an empty model catalog.
+  codexModels: z.array(z.object({
+    id: z.string(),
+    model: z.string(),
+    displayName: z.string(),
+    description: z.string(),
+    hidden: z.boolean(),
+    isDefault: z.boolean(),
+    defaultReasoningEffort: z.string(),
+    supportedReasoningEfforts: z.array(z.object({
+      reasoningEffort: z.string(),
+      description: z.string(),
+    })),
+  })).optional().catch(undefined),
   resumeSupport: z.object({
     rpcAvailable: z.boolean(),
     requiresSameMachine: z.boolean(),
