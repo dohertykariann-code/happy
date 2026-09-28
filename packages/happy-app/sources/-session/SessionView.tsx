@@ -727,8 +727,9 @@ export function SessionViewLoaded({
             t,
             session.modelMode ?? (isRig ? null : effectiveAgentDefaults.modelMode),
             machine?.metadata?.claudeModels,
+            machine?.metadata?.codexModels,
         )
-    ), [flavor, session.metadata, session.modelMode, effectiveAgentDefaults.modelMode, isRig, machine?.metadata?.claudeModels]);
+    ), [flavor, session.metadata, session.modelMode, effectiveAgentDefaults.modelMode, isRig, machine?.metadata?.claudeModels, machine?.metadata?.codexModels]);
     const availableModes = React.useMemo(() => (
         getAvailablePermissionModes(flavor, session.metadata, t, session.permissionMode)
     ), [flavor, session.metadata, session.permissionMode]);
