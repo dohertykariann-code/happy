@@ -91,6 +91,22 @@ describe('MachineMetadataSchema', () => {
         }).codexModels?.[0]?.displayName).toBe('GPT-6 Astra');
     });
 
+    it('accepts both absent and CLI-verified DeepInfra model metadata', () => {
+        const base = {
+            host: 'workstation',
+            platform: 'darwin',
+            happyCliVersion: '1.2.3',
+            happyHomeDir: '/Users/dev/.happy',
+            homeDir: '/Users/dev',
+        };
+
+        expect(MachineMetadataSchema.parse(base).deepInfraModels).toBeUndefined();
+        expect(MachineMetadataSchema.parse({
+            ...base,
+            deepInfraModels: [{ id: 'openai/zai-org/GLM-5.2', displayName: 'GLM-5.2' }],
+        }).deepInfraModels?.[0]?.displayName).toBe('GLM-5.2');
+    });
+
     it('preserves the Rig creation catalog and future machine fields', () => {
         const metadata = MachineMetadataSchema.parse({
             host: 'workstation',

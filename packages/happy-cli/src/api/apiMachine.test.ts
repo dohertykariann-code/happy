@@ -9,6 +9,8 @@ const {
     mockStopClaudeModelProbe,
     mockDetectCodexModels,
     mockStopCodexModelProbe,
+    mockDetectDeepInfraModels,
+    mockStopDeepInfraModelProbe,
 } = vi.hoisted(() => ({
     mockIo: vi.fn(),
     mockShouldReconnect: vi.fn(() => true),
@@ -16,6 +18,8 @@ const {
     mockStopClaudeModelProbe: vi.fn(),
     mockDetectCodexModels: vi.fn(),
     mockStopCodexModelProbe: vi.fn(),
+    mockDetectDeepInfraModels: vi.fn(),
+    mockStopDeepInfraModelProbe: vi.fn(),
 }));
 
 vi.mock('socket.io-client', () => ({
@@ -70,6 +74,11 @@ vi.mock('@/utils/detectCodexModels', () => ({
     stopCodexModelProbe: mockStopCodexModelProbe,
 }));
 
+vi.mock('@/utils/detectDeepInfraModels', () => ({
+    detectDeepInfraModels: mockDetectDeepInfraModels,
+    stopDeepInfraModelProbe: mockStopDeepInfraModelProbe,
+}));
+
 vi.mock('@/resume/localHappyAgentAuth', () => ({
     detectResumeSupport: vi.fn(() => ({
         rpcAvailable: false,
@@ -118,6 +127,7 @@ describe('ApiMachineClient socket reconnection', () => {
         vi.clearAllMocks();
         mockDetectClaudeModels.mockResolvedValue(undefined);
         mockDetectCodexModels.mockResolvedValue(undefined);
+        mockDetectDeepInfraModels.mockResolvedValue(undefined);
         mockShouldReconnect.mockReturnValue(true);
         socketHandlers = {};
         mockSocket = {
@@ -293,5 +303,34 @@ describe('ApiMachineClient socket reconnection', () => {
         });
         client.shutdown();
         expect(mockStopCodexModelProbe).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts the DeepInfra model probe without awaiting socket startup, then publishes its result', async () => {
+        let resolveModels: ((models: Array<any>) => void) | undefined;
+        mockDetectDeepInfraModels.mockReturnValue(new Promise((resolve) => {
+            resolveModels = resolve;
+        }));
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        const update = vi.spyOn(client, 'updateMachineMetadata').mockImplementation(async (handler) => {
+            handler(makeMachine().metadata);
+        });
+        client.connect();
+
+        emitSocketEvent('connect');
+
+        expect(mockDetectDeepInfraModels).toHaveBeenCalledTimes(1);
+        const updatesBeforeProbeResolves = update.mock.calls.length;
+
+        resolveModels?.([{ id: 'openai/zai-org/GLM-5.2', displayName: 'GLM-5.2' }]);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(update.mock.calls).toHaveLength(updatesBeforeProbeResolves + 1);
+        const modelUpdate = update.mock.calls.at(-1)?.[0];
+        expect(modelUpdate?.(makeMachine().metadata)).toMatchObject({
+            deepInfraModels: [{ id: 'openai/zai-org/GLM-5.2' }],
+        });
+        client.shutdown();
+        expect(mockStopDeepInfraModelProbe).toHaveBeenCalledTimes(1);
     });
 });

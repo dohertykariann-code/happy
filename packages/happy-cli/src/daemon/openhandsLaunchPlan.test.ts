@@ -32,6 +32,18 @@ describe('OpenHands daemon launch plans', () => {
     }
   });
 
+  it('uses an allowlisted DeepInfra model selected in the app', () => {
+    const plan = buildOpenHandsLaunchPlan('openhands_deepinfra', { DEEPINFRA_API_KEY: 'test-key' }, 'openai/zai-org/GLM-5.2');
+
+    expect(plan).toMatchObject({ env: { LLM_MODEL: 'openai/zai-org/GLM-5.2' } });
+  });
+
+  it('uses the current default instead of an arbitrary caller-supplied DeepInfra model', () => {
+    const plan = buildOpenHandsLaunchPlan('openhands_deepinfra', { DEEPINFRA_API_KEY: 'test-key' }, 'openai/untrusted/model');
+
+    expect(plan).toMatchObject({ env: { LLM_MODEL: 'openai/deepseek-ai/DeepSeek-V4-Flash' } });
+  });
+
   it('fails before spawning when the DeepInfra key is absent', () => {
     expect(buildOpenHandsLaunchPlan('openhands_deepinfra', {})).toEqual({
       errorMessage: expect.stringContaining('DEEPINFRA_API_KEY'),

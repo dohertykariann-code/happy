@@ -339,7 +339,7 @@ export async function startDaemon(): Promise<void> {
           ...sanitizeSessionEnvironment(options.environmentVariables ?? {}),
         };
         const openHandsPlan = isOpenHandsAgent(options.agent)
-          ? buildOpenHandsLaunchPlan(options.agent, ambientEnvironment)
+          ? buildOpenHandsLaunchPlan(options.agent, ambientEnvironment, options.modelMode)
           : null;
         if (openHandsPlan && 'errorMessage' in openHandsPlan) {
           return { type: 'error', errorMessage: openHandsPlan.errorMessage };

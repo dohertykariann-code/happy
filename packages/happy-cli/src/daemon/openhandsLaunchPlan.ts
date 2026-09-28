@@ -1,3 +1,5 @@
+import { DEFAULT_DEEPINFRA_MODEL, DEEPINFRA_MODEL_ALLOWLIST } from './deepInfraModelAllowlist';
+
 export type OpenHandsAgentType = 'openhands_local' | 'openhands_deepinfra';
 
 export type OpenHandsLaunchPlan = {
@@ -12,6 +14,7 @@ export type OpenHandsLaunchPlan = {
 export function buildOpenHandsLaunchPlan(
   agent: OpenHandsAgentType,
   hostEnvironment: NodeJS.ProcessEnv,
+  modelId?: string,
 ): OpenHandsLaunchPlan | { errorMessage: string } {
   if (agent === 'openhands_local') {
     return {
@@ -37,7 +40,9 @@ export function buildOpenHandsLaunchPlan(
   return {
     args: ['acp', 'openhands_deepinfra', '--started-by', 'daemon'],
     env: {
-      LLM_MODEL: 'openai/deepseek-ai/DeepSeek-V4-Flash',
+      LLM_MODEL: modelId && DEEPINFRA_MODEL_ALLOWLIST.includes(modelId)
+        ? modelId
+        : DEFAULT_DEEPINFRA_MODEL,
       LLM_BASE_URL: 'https://api.deepinfra.com/v1/openai',
       LLM_API_KEY: apiKey,
     },

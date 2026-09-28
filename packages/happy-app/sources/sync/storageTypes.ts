@@ -486,6 +486,12 @@ export const MachineMetadataSchema = z.object({
             description: z.string(),
         })),
     })).optional().catch(undefined),
+    // Optional: older CLIs, offline machines, and failed asynchronous probes
+    // do not report this. DeepInfra pickers retain their hardcoded fallback.
+    deepInfraModels: z.array(z.object({
+        id: z.string(),
+        displayName: z.string(),
+    })).optional().catch(undefined),
     // Rig registers as its own machine instead of being launched by happy-cli.
     // Keep its creation catalog so the new-session UI can send Rig-native
     // provider/model identifiers to the machine RPC.
