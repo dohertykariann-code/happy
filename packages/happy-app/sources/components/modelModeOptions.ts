@@ -598,6 +598,30 @@ export function findOptionByKey<T extends ModeOption>(options: T[], key: string 
     return options.find((option) => option.key === key) ?? null;
 }
 
+/** Resolves an agent default against a live Claude catalog without changing saved session selections. */
+export function resolveDefaultModelOption(
+    options: readonly ModelMode[],
+    defaultKey: string | null | undefined,
+): ModelMode | null {
+    if (!defaultKey) return null;
+
+    const exactKey = options.find((option) => option.key === defaultKey);
+    if (exactKey) return exactKey;
+
+    // `default` may resolve to the same model as a named row, but it means
+    // "let Claude pick" and must not replace the configured named default.
+    const exactModelId = options.find((option) => option.key !== 'default' && option.modelId === defaultKey);
+    if (exactModelId) return exactModelId;
+
+    const defaultFamily = defaultKey.match(/^claude-([^-]+)-.+?(\[[^\]]+\])?$/);
+    if (!defaultFamily) return null;
+    return options.find((option) => {
+        if (option.key === 'default') return false;
+        const optionFamily = option.modelId?.match(/^claude-([^-]+)-.+?(\[[^\]]+\])?$/);
+        return optionFamily?.[1] === defaultFamily[1] && (optionFamily?.[2] ?? '') === (defaultFamily[2] ?? '');
+    }) ?? null;
+}
+
 export function resolveCurrentOption<T extends ModeOption>(
     options: T[],
     preferredKeys: Array<string | null | undefined>,

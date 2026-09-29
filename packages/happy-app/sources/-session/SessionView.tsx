@@ -11,6 +11,7 @@ import {
     getAvailablePermissionModes,
     getEffortLevelsForModel,
     getRigCurrentModelOptionKey,
+    resolveDefaultModelOption,
     resolveCurrentOption,
     EffortLevel,
 } from '@/components/modelModeOptions';
@@ -752,7 +753,7 @@ export function SessionViewLoaded({
     const modelMode = React.useMemo<ModelMode | null>(() => (
         resolveCurrentOption(availableModels, [
             session.modelMode,
-            isRig ? getRigCurrentModelOptionKey(session.metadata) : effectiveAgentDefaults.modelMode,
+            isRig ? getRigCurrentModelOptionKey(session.metadata) : resolveDefaultModelOption(availableModels, effectiveAgentDefaults.modelMode)?.key,
             isRig ? undefined : session.metadata?.currentModelCode,
         ])
     ), [availableModels, session.modelMode, effectiveAgentDefaults.modelMode, session.metadata, isRig]);
