@@ -64,6 +64,7 @@ import {
     getEffortLevelsForModel,
     getSupportsWorktree,
     includeConfiguredModel,
+    resolveDefaultModelOption,
     type PermissionMode,
     type ModelMode,
     type EffortLevel,
@@ -1079,7 +1080,7 @@ function NewSessionScreen() {
 
         setModelIndex(findPreferredModeIndex(modelModes, [
             draft.modelMode,
-            effectiveAgentDefaults.modelMode,
+            resolveDefaultModelOption(modelModes, effectiveAgentDefaults.modelMode)?.key,
         ]));
 
         if (!canPickWorktree) setWorktreeKey('__none__');

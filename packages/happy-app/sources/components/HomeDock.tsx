@@ -50,6 +50,7 @@ import {
     getSupportsWorktree,
     groupModelModesByProvider,
     includeConfiguredModel,
+    resolveDefaultModelOption,
     type ModeOption,
 } from './modelModeOptions';
 import type { NewSessionAgentType } from '@/sync/persistence';
@@ -914,7 +915,10 @@ export const HomeDock = React.memo(({
         defaults.permissionMode,
         rigCreation ? null : getCodeAgentDefaults(agentType, happyCliVersion).permissionMode,
     ]);
-    const currentModel = resolveOption(modelOptions, [modelMode, defaults.modelMode]);
+    const currentModel = resolveOption(modelOptions, [
+        modelMode,
+        resolveDefaultModelOption(modelOptions, defaults.modelMode)?.key,
+    ]);
     const effortOptions = React.useMemo(
         () => rigCreation
             ? rigCreation.effortsForModel(currentModel?.key).map((key) => ({ key, name: key }))

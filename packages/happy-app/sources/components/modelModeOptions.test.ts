@@ -22,6 +22,7 @@ import {
     getHardcodedModelModes,
     getHardcodedPermissionModes,
     mapMetadataOptions,
+    resolveDefaultModelOption,
     resolveCurrentOption,
 } from './modelModeOptions';
 import { sortPermissionModes } from '@/utils/permissionModeLabels';
@@ -208,6 +209,32 @@ describe('modelModeOptions', () => {
                 providerName: 'Anthropic',
             },
         ]);
+    });
+
+    it('resolves an agent default against the live Claude catalog', () => {
+        const liveCatalog = [
+            { value: 'default', resolvedModel: 'claude-opus-5[1m]', displayName: 'Default (recommended)', description: '' },
+            { value: 'opus[1m]', resolvedModel: 'claude-opus-5[1m]', displayName: 'Opus (1M context)', description: '' },
+            { value: 'claude-fable-5-1[1m]', resolvedModel: 'claude-fable-5-1', displayName: 'Fable', description: '' },
+            { value: 'sonnet', resolvedModel: 'claude-sonnet-5', displayName: 'Sonnet', description: '' },
+            { value: 'haiku', resolvedModel: 'claude-haiku-4-5-20251001', displayName: 'Haiku', description: '' },
+            { value: 'opus', resolvedModel: 'claude-opus-5', displayName: 'Opus', description: '' },
+        ];
+
+        expect(resolveDefaultModelOption(getClaudeModelModes(liveCatalog), 'claude-sonnet-5')?.key).toBe('sonnet');
+        expect(resolveDefaultModelOption(getClaudeModelModes([
+            ...liveCatalog.filter((model) => model.value !== 'sonnet'),
+            { value: 'sonnet', resolvedModel: 'claude-sonnet-5-5', displayName: 'Sonnet', description: '' },
+        ]), 'claude-sonnet-5')?.key).toBe('sonnet');
+        expect(resolveDefaultModelOption(getClaudeModelModes(liveCatalog), 'claude-opus-5[1m]')?.key).toBe('opus[1m]');
+        expect(resolveDefaultModelOption(getClaudeModelModes(liveCatalog.map((model) => (
+            model.resolvedModel === 'claude-opus-5[1m]' ? { ...model, resolvedModel: 'claude-opus-5-5[1m]' } : model
+        ))), 'claude-opus-5[1m]')?.key).toBe('opus[1m]');
+        expect(resolveDefaultModelOption(getClaudeModelModes(liveCatalog), 'claude-unknown-5')).toBeNull();
+        expect(resolveDefaultModelOption([
+            { key: 'claude-sonnet-5', name: 'Exact key', modelId: 'claude-opus-5' },
+            { key: 'sonnet', name: 'Model ID', modelId: 'claude-sonnet-5' },
+        ], 'claude-sonnet-5')?.name).toBe('Exact key');
     });
 
     it('derives a versioned label from resolvedModel when displayName is generic', () => {
