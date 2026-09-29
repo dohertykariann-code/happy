@@ -27,6 +27,7 @@ import { useImagePicker } from '@/hooks/useImagePicker';
 import { Modal } from '@/modal';
 import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { getCurrentVoiceConversationId, getCurrentVoiceSessionDurationSeconds, startRealtimeSession, stopRealtimeSession } from '@/realtime/RealtimeSession';
+import { useVoiceDictation } from '@/realtime/useVoiceDictation';
 import { sessionAbort, sessionCancelCommunication, sessionGoalAction, sessionSetAgentModes, spawnSideChat, sessionKill, sessionArchive } from '@/sync/ops';
 import { storage, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionProjectAvatar, useSessionUsage, useSetting, useSideChatSessions } from '@/sync/storage';
 import { useSession } from '@/sync/storage';
@@ -565,6 +566,7 @@ const AGENT_INPUT_AUTOCOMPLETE_PREFIXES = ['@', '/'];
 type ChatComposerHandle = {
     getMessage: () => string;
     clearMessage: () => void;
+    appendMessage: (text: string) => void;
 };
 
 type ChatComposerProps = Omit<
@@ -611,7 +613,11 @@ const ChatComposer = React.memo(function ChatComposer(props: ChatComposerProps) 
             setMessage('');
             clearDraft();
         },
-    }), [clearDraft]);
+        appendMessage: (text: string) => {
+            const message = inputHandleRef.current?.getText() ?? '';
+            applyDraft(`${message}${text}`);
+        },
+    }), [applyDraft, clearDraft]);
 
     return (
         <AgentInput
@@ -693,6 +699,7 @@ export function SessionViewLoaded({
     }, [sessionId, usesFloatingMobileDock]);
 
     const realtimeStatus = useRealtimeStatus();
+    const dictation = useVoiceDictation();
     const { messages, isLoaded } = useSessionMessages(sessionId);
     const pendingCommunications = useSessionPendingCommunications(sessionId);
     const acknowledgedCliVersions = useLocalSetting('acknowledgedCliVersions');
@@ -930,8 +937,9 @@ export function SessionViewLoaded({
         });
     }, [sessionId, visibleAgentGoal?.text]);
 
-    // Handle microphone button press - memoized to prevent button flashing
-    const handleMicrophonePress = React.useCallback(async () => {
+    // Retained for the voice assistant controls; the composer mic uses
+    // handleMicrophonePress below for dictation only.
+    const handleRealtimeMicrophonePress = React.useCallback(async () => {
         if (realtimeStatus === 'connecting') {
             return; // Prevent actions during transitions
         }
@@ -973,14 +981,26 @@ export function SessionViewLoaded({
         }
     }, [realtimeStatus, sessionId]);
 
+    // Handle microphone button press - memoized to prevent button flashing
+    const handleMicrophonePress = React.useCallback(async () => {
+        if (dictation.state === 'idle') {
+            await dictation.start();
+        } else if (dictation.state === 'recording') {
+            const transcript = await dictation.stop();
+            if (transcript) {
+                composerHandleRef.current?.appendMessage(transcript);
+            }
+        }
+    }, [dictation]);
+
     // Memoize mic button state to prevent flashing during chat transitions.
     // While a call runs the pill under the header is the only stop control,
     // so the composer mic disappears instead of doubling as a stop button.
     const voiceSessionActive = realtimeStatus === 'connected' || realtimeStatus === 'connecting';
     const micButtonState = useMemo(() => ({
         onMicPress: voiceSessionActive ? undefined : handleMicrophonePress,
-        isMicActive: false,
-    }), [handleMicrophonePress, voiceSessionActive]);
+        isMicActive: dictation.state === 'recording' || dictation.state === 'transcribing',
+    }), [dictation.state, handleMicrophonePress, voiceSessionActive]);
 
     useSessionVisibility(sessionId, active, embedded, realtimeStatus);
 
