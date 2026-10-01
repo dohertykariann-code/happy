@@ -162,7 +162,11 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
       expect(sessions.filter(session => session.happySessionId === sessionId)).toEqual([
         expect.objectContaining({ pid: first.pid }),
       ]);
-      await waitForProcessExit(second.pid!);
+      // The rejected claimant must NOT be signalled. Refusing to register it is
+      // what prevents one session id being served twice; killing the reporter
+      // was removed because the control server has no caller authentication,
+      // so the reported PID is untrusted input.
+      expect(() => process.kill(second.pid!, 0)).not.toThrow();
     } finally {
       first.kill('SIGTERM');
       second.kill('SIGTERM');
@@ -191,7 +195,7 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
     }
   });
 
-  it('does not leave a second claimant after stopping a duplicated session ID', async () => {
+  it('never registers a second claimant, so the registry cannot become ambiguous', async () => {
     const first = spawnLiveSessionProcess();
     const second = spawnLiveSessionProcess();
     const sessionId = 'duplicate-stop-ambiguity';
@@ -200,9 +204,14 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
       await notifyDaemonSessionStarted(sessionId, terminalMetadata(first.pid!));
       await notifyDaemonSessionStarted(sessionId, terminalMetadata(second.pid!));
 
-      expect(await stopDaemonSession(sessionId)).toBe(true);
+      // The duplicate is refused at the webhook, so only the first claimant is
+      // ever tracked and there is no ambiguous state to recover from. Both
+      // processes stay alive; rejection is not termination.
       const sessions = await listDaemonSessions();
-      expect(sessions.filter(session => session.happySessionId === sessionId)).toEqual([]);
+      expect(sessions.filter(session => session.happySessionId === sessionId)).toEqual([
+        expect.objectContaining({ pid: first.pid }),
+      ]);
+      expect(() => process.kill(second.pid!, 0)).not.toThrow();
     } finally {
       first.kill('SIGTERM');
       second.kill('SIGTERM');

@@ -213,26 +213,6 @@ export async function startDaemon(): Promise<void> {
       return liveness;
     };
 
-    const terminateTrackedSession = (pid: number, reason: string): void => {
-      const session = pidToTrackedSession.get(pid);
-      if (!session || session.startedBy !== 'daemon') {
-        logger.warn(`[DAEMON RUN] Refusing to terminate untracked or externally-started PID ${pid}: ${reason}`);
-        return;
-      }
-      try {
-        if (process.platform !== 'win32') {
-          process.kill(-pid, 'SIGTERM');
-        } else {
-          session.childProcess?.kill('SIGTERM');
-        }
-        logger.warn(`[DAEMON RUN] Terminated PID ${pid}: ${reason}`);
-      } catch (error) {
-        logger.warn(`[DAEMON RUN] Failed to terminate PID ${pid} while ${reason}: ${error instanceof Error ? error.message : error}`);
-      }
-      pidToTrackedSession.delete(pid);
-      pidToAwaiter.delete(pid);
-    };
-
     // Handle webhook from happy session reporting itself
     const onHappySessionWebhook = (sessionId: string, sessionMetadata: Metadata, encryption?: SessionEncryptionData) => {
       logger.debugLargeJson(`[DAEMON RUN] Session reported`, sessionMetadata);
@@ -256,14 +236,10 @@ export async function startDaemon(): Promise<void> {
         sessionId,
         pid,
         getProcessLiveness,
-        rejectedPid => terminateTrackedSession(rejectedPid, `duplicate live claim for session ${sessionId}`),
       );
       if (claimResolution.type === 'rejected') {
         const claimantPids = claimResolution.claimantPids.join(', ');
-        logger.warn(`[DAEMON RUN] Rejecting duplicate live claim for session ${sessionId}: PID ${pid} conflicts with live PID ${claimantPids}`);
-        if (!existingSession) {
-          logger.warn(`[DAEMON RUN] Rejected PID ${pid} was not daemon-spawned; no signal was sent`);
-        }
+        logger.warn(`[DAEMON RUN] Rejecting duplicate live claim for session ${sessionId}: PID ${pid} conflicts with live PID ${claimantPids}. Not registered, not persisted, and no signal sent.`);
         return;
       }
 

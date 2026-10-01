@@ -80,24 +80,26 @@ export function resolveSessionClaim(
 }
 
 /**
- * Applies the webhook-specific ownership rule. A webhook can report a PID but
- * can never make the daemon terminate it: only an existing daemon-created
- * record may opt into the supplied terminator.
+ * Applies the webhook-specific ownership rule.
+ *
+ * A webhook NEVER causes a signal. Refusing to register the duplicate is
+ * sufficient to stop one session id being served by two processes, so this
+ * resolver only ever classifies; it does not terminate. An earlier revision
+ * SIGTERMed the rejected claimant and that was the source of two review
+ * findings: the control server has no caller authentication, so the reported
+ * PID is untrusted input, and a stale daemon-owned record whose PID the OS has
+ * since reused would have aimed that signal at an unrelated process group.
+ * Both close by construction once no webhook path can reach `process.kill`.
  */
 export function resolveWebhookSessionClaim(
   pidToTrackedSession: Map<number, TrackedSession>,
   sessionId: string,
   hostPid: unknown,
   processLiveness: (pid: number) => ProcessLiveness,
-  terminateDaemonTrackedSession: (pid: number) => void,
 ): WebhookSessionClaimResolution {
   if (!isValidHostPid(hostPid)) return { type: 'invalid-pid', hostPid };
 
-  const resolution = resolveSessionClaim(pidToTrackedSession, sessionId, hostPid, processLiveness);
-  if (resolution.type === 'rejected' && pidToTrackedSession.get(hostPid)?.startedBy === 'daemon') {
-    terminateDaemonTrackedSession(hostPid);
-  }
-  return resolution;
+  return resolveSessionClaim(pidToTrackedSession, sessionId, hostPid, processLiveness);
 }
 
 export function formatAmbiguousSessionStopError(sessionId: string, pids: number[]): string {

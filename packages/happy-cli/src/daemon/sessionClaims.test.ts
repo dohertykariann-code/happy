@@ -16,25 +16,42 @@ function session(pid: number, happySessionId: string): TrackedSession {
 }
 
 describe('session claim resolution', () => {
-  it('rejects an untracked duplicate webhook without calling its terminator', () => {
+  it('rejects an untracked duplicate webhook and leaves the registry untouched', () => {
     const claims = new Map([[101, session(101, 'session-1')]]);
-    const terminate = vi.fn();
 
-    expect(resolveWebhookSessionClaim(claims, 'session-1', 202, () => 'alive', terminate)).toEqual({
+    expect(resolveWebhookSessionClaim(claims, 'session-1', 202, () => 'alive')).toEqual({
       type: 'rejected',
       claimantPids: [101],
     });
-    expect(terminate).not.toHaveBeenCalled();
+    expect([...claims.keys()]).toEqual([101]);
   });
 
-  it.each([-1, 0, 12.5, '202'])('rejects invalid webhook hostPid %j explicitly without calling its terminator', (hostPid) => {
-    const terminate = vi.fn();
-
-    expect(resolveWebhookSessionClaim(new Map(), 'session-1', hostPid, () => 'alive', terminate)).toEqual({
+  it.each([-1, 0, 12.5, '202'])('rejects invalid webhook hostPid %j explicitly', (hostPid) => {
+    expect(resolveWebhookSessionClaim(new Map(), 'session-1', hostPid, () => 'alive')).toEqual({
       type: 'invalid-pid',
       hostPid,
     });
-    expect(terminate).not.toHaveBeenCalled();
+  });
+
+  // The webhook resolver must never be able to cause a signal. Refusing to
+  // register the duplicate is what stops the fanout; killing the reporter was
+  // the source of two review findings (untrusted PID from an unauthenticated
+  // control server, and PID reuse aiming the signal at an unrelated process).
+  // This case is the one a regression would most plausibly re-open, because a
+  // daemon-owned record is the only kind the old code was willing to kill.
+  it('classifies a DAEMON-OWNED duplicate without terminating or evicting it', () => {
+    const owner = { pid: 101, happySessionId: 'session-1', startedBy: 'daemon' } as TrackedSession;
+    const duplicate = { pid: 202, happySessionId: 'session-1', startedBy: 'daemon' } as TrackedSession;
+    const claims = new Map([[101, owner], [202, duplicate]]);
+
+    const resolution = resolveWebhookSessionClaim(claims, 'session-1', 202, () => 'alive');
+
+    expect(resolution).toEqual({ type: 'rejected', claimantPids: [101] });
+    // The removed terminator deleted the reporter's map entry as its final act,
+    // so an intact record is the observable proof it was not invoked. Asserting
+    // on a kill spy would be vacuous here: the resolver takes no such argument.
+    expect(claims.get(202)).toBe(duplicate);
+    expect([...claims.keys()]).toEqual([101, 202]);
   });
 
   it('treats EPERM as alive and ESRCH as dead', () => {
