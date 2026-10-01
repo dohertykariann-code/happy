@@ -416,6 +416,13 @@ export async function releaseDaemonLock(lockHandle: FileHandle): Promise<void> {
 // ─── Session persistence (survives daemon restarts) ───
 
 export type PersistedSession = {
+  /**
+   * The process that held this session's exclusive claim when it was persisted.
+   * PID is paired with the process start time so the record stays falsifiable
+   * across a daemon restart; see daemon/sessionOwnership.ts. Optional because a
+   * session whose owner identity could not be read is persisted without one.
+   */
+  owner?: { pid: number; startedAt: string };
   encryptionKey: string;
   encryptionVariant: 'legacy' | 'dataKey';
   seq: number;

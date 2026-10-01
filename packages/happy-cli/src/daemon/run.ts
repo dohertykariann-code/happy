@@ -36,6 +36,7 @@ import {
 import { startHappyTerminalDaemon } from './happyTerminalBoot';
 import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode } from './spawnModeArgs';
 import { buildOpenHandsLaunchPlan, isOpenHandsAgent } from './openhandsLaunchPlan';
+import { describeProcessOwner, restorePersistedClaims } from './sessionOwnership';
 import { findTrackedSessionById, formatAmbiguousSessionStopError, getResumeOwnerConflict, probeProcessLiveness, ProcessLiveness, pruneDeadSessionClaims, resolveWebhookSessionClaim } from './sessionClaims';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
@@ -199,6 +200,24 @@ export async function startDaemon(): Promise<void> {
       logger.debug(`[DAEMON RUN] Loaded ${Object.keys(persisted).length} persisted sessions from disk`);
     }
 
+    // A restart used to empty the live claim registry outright, which is what
+    // let a later resume spawn a SECOND process for a session id that was still
+    // running, with nothing left in the map to conflict with. Restore the claims
+    // whose owning process is provably the same one; anything unverifiable is
+    // deliberately left out rather than guessed at.
+    const droppedClaims = restorePersistedClaims({
+      persisted,
+      sessionIdToFinishedSession,
+      pidToTrackedSession,
+    });
+    if (pidToTrackedSession.size > 0) {
+      logger.debug(`[DAEMON RUN] Restored ${pidToTrackedSession.size} live session claim(s) owned by PIDs ${[...pidToTrackedSession.keys()].join(', ')}`);
+    }
+    if (droppedClaims.length > 0) {
+      const summary = droppedClaims.map(d => `${d.sessionId}=${d.reason}`).join(', ');
+      logger.debug(`[DAEMON RUN] Did not restore ${droppedClaims.length} session claim(s): ${summary}`);
+    }
+
     // Session spawning awaiter system
     const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
 
@@ -254,6 +273,9 @@ export async function startDaemon(): Promise<void> {
           agentStateVersion: encryption.agentStateVersion,
           metadata: sessionMetadata,
           savedAt: Date.now(),
+          // Record WHICH process owns the claim, so a restart can restore it
+          // instead of silently dropping every live session into untracked.
+          owner: describeProcessOwner(pid),
         });
       }
 
