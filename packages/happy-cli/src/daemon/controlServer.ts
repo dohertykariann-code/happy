@@ -20,7 +20,7 @@ export function startDaemonControlServer({
   onHappySessionWebhook
 }: {
   getChildren: () => TrackedSession[];
-  stopSession: (sessionId: string) => boolean;
+  stopSession: (sessionId: string) => { success: boolean; error?: string };
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata, encryption?: SessionEncryptionData) => void;
@@ -111,7 +111,8 @@ export function startDaemonControlServer({
         }),
         response: {
           200: z.object({
-            success: z.boolean()
+            success: z.boolean(),
+            error: z.string().optional(),
           })
         }
       }
@@ -119,8 +120,7 @@ export function startDaemonControlServer({
       const { sessionId } = request.body;
 
       logger.debug(`[CONTROL SERVER] Stop session request: ${sessionId}`);
-      const success = stopSession(sessionId);
-      return { success };
+      return stopSession(sessionId);
     });
 
     // Spawn new session
