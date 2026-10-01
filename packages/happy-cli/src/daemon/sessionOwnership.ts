@@ -13,9 +13,10 @@
 
 import { execFileSync } from 'node:child_process';
 
-import { TrackedSession } from './types';
+import { ProcessLiveness } from './sessionClaims';
+import { ProcessOwner, TrackedSession } from './types';
 
-export type ProcessOwner = { pid: number; startedAt: string };
+export type { ProcessOwner };
 
 export type OwnerVerdict = 'same' | 'reused' | 'gone' | 'unknown';
 
@@ -167,8 +168,61 @@ export function restorePersistedClaims(args: {
     if (!persistedSession) continue;
     // Carry metadata and encryption onto the live claim: if the owner later
     // exits, resumeSession drops the claim and resumes from THIS object.
-    pidToTrackedSession.set(pid, { ...persistedSession, pid });
+    const owner = persisted[sessionId]?.owner;
+    pidToTrackedSession.set(pid, { ...persistedSession, pid, owner });
   }
 
   return dropped;
+}
+
+export type ClaimOwnership = 'owned' | 'released' | 'unverifiable';
+
+/**
+ * Decides whether a claim is still held by the process that took it.
+ *
+ * A bare liveness probe is NOT ownership proof: a PID reused by an unrelated
+ * long-running process reads as alive, which would block a legitimate resume
+ * with no way out, since a restored claim cannot be stopped through
+ * stopSession. When an owner record exists its start time is re-checked here;
+ * claims predating this field fall back to liveness so behaviour is unchanged
+ * for them.
+ */
+export function verifyClaimOwnership(
+  session: { pid: number; owner?: ProcessOwner },
+  processLiveness: (pid: number) => ProcessLiveness,
+  readStartTime: StartTimeReader = readProcessStartTime,
+): ClaimOwnership {
+  if (session.owner) {
+    switch (verifyOwner(session.owner, readStartTime)) {
+      case 'same': return 'owned';
+      case 'reused':
+      case 'gone': return 'released';
+      case 'unknown': return 'unverifiable';
+    }
+  }
+  switch (processLiveness(session.pid)) {
+    case 'alive': return 'owned';
+    case 'dead': return 'released';
+    default: return 'unverifiable';
+  }
+}
+
+/**
+ * Drops claims whose owner provably no longer holds the PID, and returns the
+ * PIDs dropped. An unverifiable claim is RETAINED: releasing one we cannot
+ * check would hand the session id to a second process, which is the bug.
+ */
+export function pruneUnownedClaims(
+  pidToTrackedSession: Map<number, TrackedSession>,
+  processLiveness: (pid: number) => ProcessLiveness,
+  readStartTime: StartTimeReader = readProcessStartTime,
+): number[] {
+  const released: number[] = [];
+  for (const [pid, session] of [...pidToTrackedSession.entries()]) {
+    if (verifyClaimOwnership(session, processLiveness, readStartTime) === 'released') {
+      pidToTrackedSession.delete(pid);
+      released.push(pid);
+    }
+  }
+  return released;
 }

@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   isValidPersistedOwner,
+  pruneUnownedClaims,
   describeProcessOwner,
   readProcessStartTime,
   restorePersistedClaims,
   selectRestorableClaims,
+  verifyClaimOwnership,
   verifyOwner,
 } from './sessionOwnership';
 import { TrackedSession } from './types';
@@ -269,5 +271,106 @@ describe('restorePersistedClaims (the boot path itself)', () => {
 
     expect(live.size).toBe(0);
     expect(dropped).toEqual([{ sessionId: 'session-1', reason: 'malformed' }]);
+  });
+});
+
+// F1: the boot check proved identity and then threw the proof away, so every
+// later path fell back to a bare liveness probe. A PID reused by an unrelated
+// long-running process then reads as "alive" and blocks resume, and the
+// advertised remedy (stop it) is refused for a restored claim, so the session
+// becomes unresumable until the next restart.
+describe('verifyClaimOwnership', () => {
+  const startedAt = 'Thu Oct  1 15:59:11 2026';
+
+  it('reports owned when the recorded owner is still the same process', () => {
+    expect(verifyClaimOwnership(
+      { pid: 4242, owner: { pid: 4242, startedAt } },
+      () => 'alive',
+      () => startedAt,
+    )).toBe('owned');
+  });
+
+  it('reports released when the PID is now held by an unrelated process', () => {
+    expect(verifyClaimOwnership(
+      { pid: 4242, owner: { pid: 4242, startedAt } },
+      () => 'alive',
+      () => 'a different start time',
+    )).toBe('released');
+  });
+
+  it('reports released when the owner has exited', () => {
+    expect(verifyClaimOwnership(
+      { pid: 4242, owner: { pid: 4242, startedAt } },
+      () => 'dead',
+      () => undefined,
+    )).toBe('released');
+  });
+
+  it('reports unverifiable when ownership cannot be established', () => {
+    expect(verifyClaimOwnership(
+      { pid: 4242, owner: { pid: 4242, startedAt } },
+      () => 'alive',
+      () => { throw new Error('ps unavailable'); },
+    )).toBe('unverifiable');
+  });
+
+  it.each([
+    ['alive', 'owned'],
+    ['dead', 'released'],
+    ['unknown', 'unverifiable'],
+  ] as const)('falls back to liveness %s -> %s for a claim with no owner', (liveness, expected) => {
+    expect(verifyClaimOwnership({ pid: 4242 }, () => liveness, () => startedAt)).toBe(expected);
+  });
+});
+
+describe('pruneUnownedClaims', () => {
+  const startedAt = 'Thu Oct  1 15:59:11 2026';
+
+  it('removes a claim whose PID was reused and returns it', () => {
+    const live = new Map<number, TrackedSession>([
+      [4242, { pid: 4242, happySessionId: 'session-1', startedBy: 'persisted', owner: { pid: 4242, startedAt } }],
+    ]);
+
+    expect(pruneUnownedClaims(live, () => 'alive', () => 'different')).toEqual([4242]);
+    expect(live.size).toBe(0);
+  });
+
+  it('keeps a claim whose owner is still the same process', () => {
+    const live = new Map<number, TrackedSession>([
+      [4242, { pid: 4242, happySessionId: 'session-1', startedBy: 'persisted', owner: { pid: 4242, startedAt } }],
+    ]);
+
+    expect(pruneUnownedClaims(live, () => 'alive', () => startedAt)).toEqual([]);
+    expect(live.size).toBe(1);
+  });
+
+  it('keeps an unverifiable claim rather than silently releasing it', () => {
+    const live = new Map<number, TrackedSession>([
+      [4242, { pid: 4242, happySessionId: 'session-1', startedBy: 'persisted', owner: { pid: 4242, startedAt } }],
+    ]);
+
+    expect(pruneUnownedClaims(live, () => 'alive', () => { throw new Error('ps gone'); })).toEqual([]);
+    expect(live.size).toBe(1);
+  });
+});
+
+describe('restorePersistedClaims retains the ownership proof', () => {
+  const startedAt = 'Thu Oct  1 15:59:11 2026';
+
+  // Without this, F1 reopens: the identity is verified once at boot and then
+  // discarded, leaving every later decision to a bare liveness probe.
+  it('attaches the verified owner to the restored claim', () => {
+    const live = new Map<number, TrackedSession>();
+
+    restorePersistedClaims({
+      persisted: { 'session-1': { owner: { pid: 4242, startedAt } } },
+      sessionIdToFinishedSession: new Map([['session-1', {
+        startedBy: 'persisted', happySessionId: 'session-1', pid: 0,
+      }]]),
+      pidToTrackedSession: live,
+      readStartTime: () => startedAt,
+    });
+
+    expect(live.get(4242)?.owner).toEqual({ pid: 4242, startedAt });
   });
 });
