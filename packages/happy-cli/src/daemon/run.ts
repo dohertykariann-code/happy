@@ -36,6 +36,7 @@ import {
 import { startHappyTerminalDaemon } from './happyTerminalBoot';
 import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode } from './spawnModeArgs';
 import { buildOpenHandsLaunchPlan, isOpenHandsAgent } from './openhandsLaunchPlan';
+import { findTrackedSessionById, formatAmbiguousSessionStopError, getResumeOwnerConflict, probeProcessLiveness, ProcessLiveness, pruneDeadSessionClaims, resolveWebhookSessionClaim } from './sessionClaims';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
@@ -204,20 +205,46 @@ export async function startDaemon(): Promise<void> {
     // Helper functions
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
 
+    const getProcessLiveness = (pid: number): ProcessLiveness => {
+      const liveness = probeProcessLiveness(pid, process.kill);
+      if (liveness === 'unknown') {
+        logger.warn(`[DAEMON RUN] Could not determine whether PID ${pid} is alive; retaining its session claim`);
+      }
+      return liveness;
+    };
+
     // Handle webhook from happy session reporting itself
     const onHappySessionWebhook = (sessionId: string, sessionMetadata: Metadata, encryption?: SessionEncryptionData) => {
       logger.debugLargeJson(`[DAEMON RUN] Session reported`, sessionMetadata);
 
       const pid = sessionMetadata.hostPid;
-      if (!pid) {
-        logger.debug(`[DAEMON RUN] Session webhook missing hostPid for sessionId: ${sessionId}`);
+      if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) {
+        logger.warn(`[DAEMON RUN] Rejecting session webhook with invalid hostPid ${String(pid)} for sessionId: ${sessionId}`);
         return;
       }
 
       logger.debug(`[DAEMON RUN] Session webhook: ${sessionId}, PID: ${pid}, started by: ${sessionMetadata.startedBy || 'unknown'}, hasEncryption: ${!!encryption}`);
       logger.debug(`[DAEMON RUN] Current tracked sessions before webhook: ${Array.from(pidToTrackedSession.keys()).join(', ')}`);
 
-      // Persist encryption data to disk so it survives daemon restarts
+      // Check if we already have this PID (daemon-spawned or a self re-report).
+      const existingSession = pidToTrackedSession.get(pid);
+
+      // A session ID is an exclusive process claim. Prune dead owners before
+      // deciding, so a process that has really exited cannot block its resume.
+      const claimResolution = resolveWebhookSessionClaim(
+        pidToTrackedSession,
+        sessionId,
+        pid,
+        getProcessLiveness,
+      );
+      if (claimResolution.type === 'rejected') {
+        const claimantPids = claimResolution.claimantPids.join(', ');
+        logger.warn(`[DAEMON RUN] Rejecting duplicate live claim for session ${sessionId}: PID ${pid} conflicts with live PID ${claimantPids}. Not registered, not persisted, and no signal sent.`);
+        return;
+      }
+
+      // Persist encryption data to disk so it survives daemon restarts. A
+      // rejected claimant must never overwrite the accepted session's state.
       if (encryption) {
         persistSession(sessionId, {
           encryptionKey: encodeBase64(encryption.encryptionKey),
@@ -230,15 +257,13 @@ export async function startDaemon(): Promise<void> {
         });
       }
 
-      // Check if we already have this PID (daemon-spawned)
-      const existingSession = pidToTrackedSession.get(pid);
-
-      if (existingSession && existingSession.startedBy === 'daemon') {
-        // Update daemon-spawned session with reported data
+      if (existingSession) {
+        // A process re-reporting its own session is expected during daemon
+        // handoff/reconnect; it is not a duplicate claim.
         existingSession.happySessionId = sessionId;
         existingSession.happySessionMetadataFromLocalWebhook = sessionMetadata;
         existingSession.encryption = encryption;
-        logger.debug(`[DAEMON RUN] Updated daemon-spawned session ${sessionId} with metadata`);
+        logger.debug(`[DAEMON RUN] Updated tracked session ${sessionId} with metadata`);
 
         // Resolve any awaiter for this PID
         const awaiter = pidToAwaiter.get(pid);
@@ -701,11 +726,13 @@ export async function startDaemon(): Promise<void> {
       });
     };
 
-    const findTrackedSessionById = (happySessionId: string): TrackedSession | undefined => {
-      for (const session of pidToTrackedSession.values()) {
-        if (session.happySessionId === happySessionId) return session;
+    const lookupTrackedSessionById = (happySessionId: string) => {
+      const lookup = findTrackedSessionById(pidToTrackedSession, sessionIdToFinishedSession, happySessionId);
+      if (lookup.type === 'ambiguous') {
+        const { pids } = lookup;
+        logger.warn(`[DAEMON RUN] Ambiguous live claims for session ${happySessionId}: PIDs ${pids.join(', ')}`);
       }
-      return sessionIdToFinishedSession.get(happySessionId);
+      return lookup;
     };
 
     const fetchServerSessionMetadata = async (sessionId: string, encryptionKey: Uint8Array, encryptionVariant: 'legacy' | 'dataKey'): Promise<Metadata | null> => {
@@ -727,9 +754,24 @@ export async function startDaemon(): Promise<void> {
 
     const resumeSession = async (happySessionId: string, options?: { model?: string; permissionMode?: string }): Promise<SpawnSessionResult> => {
       try {
-        const tracked = findTrackedSessionById(happySessionId);
-        if (!tracked) {
+        const lookup = lookupTrackedSessionById(happySessionId);
+        if (lookup.type === 'ambiguous') {
+          return { type: 'error', errorMessage: `Session ${happySessionId} has conflicting live claims from PIDs ${lookup.pids.join(', ')}. Stop the duplicate processes before resuming.` };
+        }
+        if (lookup.type === 'not-found') {
           return { type: 'error', errorMessage: `Session ${happySessionId} is not tracked by this daemon. It may have been started before the daemon or on another machine.` };
+        }
+        const tracked = lookup.session;
+        if (pidToTrackedSession.get(tracked.pid) === tracked) {
+          const liveness = getProcessLiveness(tracked.pid);
+          const ownerConflict = getResumeOwnerConflict(tracked.pid, liveness);
+          if (ownerConflict) {
+            return {
+              type: 'error',
+              errorMessage: `${ownerConflict}; stop it before resuming.`,
+            };
+          }
+          pidToTrackedSession.delete(tracked.pid);
         }
         if (!tracked.happySessionMetadataFromLocalWebhook) {
           return { type: 'error', errorMessage: `Session ${happySessionId} has no metadata. Cannot resume.` };
@@ -790,8 +832,17 @@ export async function startDaemon(): Promise<void> {
     };
 
     // Stop a session by sessionId or PID fallback
-    const stopSession = (sessionId: string): boolean => {
+    const stopSession = (sessionId: string): { success: boolean; error?: string } => {
       logger.debug(`[DAEMON RUN] Attempting to stop session ${sessionId}`);
+
+      if (!sessionId.startsWith('PID-')) {
+        const lookup = lookupTrackedSessionById(sessionId);
+        if (lookup.type === 'ambiguous') {
+          const error = formatAmbiguousSessionStopError(sessionId, lookup.pids);
+          logger.warn(`[DAEMON RUN] ${error}`);
+          return { success: false, error };
+        }
+      }
 
       // Try to find by sessionId first
       for (const [pid, session] of pidToTrackedSession.entries()) {
@@ -829,23 +880,19 @@ export async function startDaemon(): Promise<void> {
               }
             }
           } else {
-            // For externally started sessions, try to kill by PID
-            try {
-              process.kill(pid, 'SIGTERM');
-              logger.debug(`[DAEMON RUN] Sent SIGTERM to external session PID ${pid}`);
-            } catch (error) {
-              logger.debug(`[DAEMON RUN] Failed to kill external session PID ${pid}:`, error);
-            }
+            const error = `Session ${sessionId} was not spawned by this daemon; refusing to signal PID ${pid}`;
+            logger.warn(`[DAEMON RUN] ${error}`);
+            return { success: false, error };
           }
 
           pidToTrackedSession.delete(pid);
           logger.debug(`[DAEMON RUN] Removed session ${sessionId} from tracking`);
-          return true;
+          return { success: true };
         }
       }
 
       logger.debug(`[DAEMON RUN] Session ${sessionId} not found`);
-      return false;
+      return { success: false };
     };
 
     // Handle child process exit — preserve session data for resume
@@ -947,15 +994,9 @@ export async function startDaemon(): Promise<void> {
       }
 
       // Prune stale sessions
-      for (const [pid, _] of pidToTrackedSession.entries()) {
-        try {
-          // Check if process is still alive (signal 0 doesn't kill, just checks)
-          process.kill(pid, 0);
-        } catch (error) {
-          // Process is dead, remove from tracking
-          logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists)`);
-          pidToTrackedSession.delete(pid);
-        }
+      const deadPids = pruneDeadSessionClaims(pidToTrackedSession, getProcessLiveness);
+      for (const pid of deadPids) {
+        logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists)`);
       }
 
       // Check if daemon needs update by detecting whether `dist/index.mjs` was

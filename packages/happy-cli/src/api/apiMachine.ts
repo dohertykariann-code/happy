@@ -94,7 +94,7 @@ interface DaemonToServerEvents {
 type MachineRpcHandlers = {
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     resumeSession?: (sessionId: string, options?: { model?: string; permissionMode?: string }) => Promise<SpawnSessionResult>;
-    stopSession: (sessionId: string) => boolean;
+    stopSession: (sessionId: string) => { success: boolean; error?: string };
     requestShutdown: () => void;
 }
 
@@ -187,9 +187,9 @@ export class ApiMachineClient {
                 throw new Error('Session ID is required');
             }
 
-            const success = stopSession(sessionId);
-            if (!success) {
-                throw new Error('Session not found or failed to stop');
+            const result = stopSession(sessionId);
+            if (!result.success) {
+                throw new Error(result.error || 'Session not found or failed to stop');
             }
 
             logger.debug(`[API MACHINE] Stopped session ${sessionId}`);

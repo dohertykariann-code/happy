@@ -52,6 +52,41 @@ async function stopAllTrackedSessions(): Promise<void> {
   );
 }
 
+function spawnLiveSessionProcess() {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000)'], {
+    stdio: 'ignore',
+  });
+  if (!child.pid) {
+    throw new Error('Failed to spawn live session process');
+  }
+  return child;
+}
+
+async function waitForProcessExit(pid: number): Promise<void> {
+  await waitFor(async () => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+}
+
+function terminalMetadata(hostPid: number): Metadata {
+  return {
+    path: '/test/path',
+    host: 'test-host',
+    homeDir: '/test/home',
+    happyHomeDir: '/test/happy-home',
+    happyLibDir: '/test/happy-lib',
+    happyToolsDir: '/test/happy-tools',
+    hostPid,
+    startedBy: 'terminal',
+    machineId: 'test-machine-123',
+  };
+}
+
 describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
   let daemonPid: number;
 
@@ -112,6 +147,92 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
     expect(tracked.startedBy).toBe('happy directly - likely by user from terminal');
     expect(tracked.happySessionId).toBe('test-session-123');
     expect(tracked.pid).toBe(99999);
+  });
+
+  it('keeps exactly one claimant when two live processes report the same session ID', async () => {
+    const first = spawnLiveSessionProcess();
+    const second = spawnLiveSessionProcess();
+    const sessionId = 'duplicate-live-claim';
+
+    try {
+      await notifyDaemonSessionStarted(sessionId, terminalMetadata(first.pid!));
+      await notifyDaemonSessionStarted(sessionId, terminalMetadata(second.pid!));
+
+      const sessions = await listDaemonSessions();
+      expect(sessions.filter(session => session.happySessionId === sessionId)).toEqual([
+        expect.objectContaining({ pid: first.pid }),
+      ]);
+      // The rejected claimant must NOT be signalled. Refusing to register it is
+      // what prevents one session id being served twice; killing the reporter
+      // was removed because the control server has no caller authentication,
+      // so the reported PID is untrusted input.
+      expect(() => process.kill(second.pid!, 0)).not.toThrow();
+    } finally {
+      first.kill('SIGTERM');
+      second.kill('SIGTERM');
+    }
+  });
+
+  it('replaces a dead claimant when a live process re-reports its session ID', async () => {
+    const dead = spawnLiveSessionProcess();
+    const replacement = spawnLiveSessionProcess();
+    const sessionId = 'dead-claim-replacement';
+
+    try {
+      await notifyDaemonSessionStarted(sessionId, terminalMetadata(dead.pid!));
+      dead.kill('SIGTERM');
+      await waitForProcessExit(dead.pid!);
+
+      await notifyDaemonSessionStarted(sessionId, terminalMetadata(replacement.pid!));
+
+      const sessions = await listDaemonSessions();
+      expect(sessions.filter(session => session.happySessionId === sessionId)).toEqual([
+        expect.objectContaining({ pid: replacement.pid }),
+      ]);
+    } finally {
+      dead.kill('SIGTERM');
+      replacement.kill('SIGTERM');
+    }
+  });
+
+  it('never registers a second claimant, so the registry cannot become ambiguous', async () => {
+    const first = spawnLiveSessionProcess();
+    const second = spawnLiveSessionProcess();
+    const sessionId = 'duplicate-stop-ambiguity';
+
+    try {
+      await notifyDaemonSessionStarted(sessionId, terminalMetadata(first.pid!));
+      await notifyDaemonSessionStarted(sessionId, terminalMetadata(second.pid!));
+
+      // The duplicate is refused at the webhook, so only the first claimant is
+      // ever tracked and there is no ambiguous state to recover from. Both
+      // processes stay alive; rejection is not termination.
+      const sessions = await listDaemonSessions();
+      expect(sessions.filter(session => session.happySessionId === sessionId)).toEqual([
+        expect.objectContaining({ pid: first.pid }),
+      ]);
+      expect(() => process.kill(second.pid!, 0)).not.toThrow();
+    } finally {
+      first.kill('SIGTERM');
+      second.kill('SIGTERM');
+    }
+  });
+
+  it('accepts a same-process session re-report without creating a collision', async () => {
+    const process = spawnLiveSessionProcess();
+    const sessionId = 'same-process-re-report';
+
+    try {
+      await notifyDaemonSessionStarted(sessionId, terminalMetadata(process.pid!));
+      await notifyDaemonSessionStarted(sessionId, terminalMetadata(process.pid!));
+
+      const sessions = await listDaemonSessions();
+      expect(sessions.filter(session => session.happySessionId === sessionId)).toEqual([
+        expect.objectContaining({ pid: process.pid }),
+      ]);
+    } finally {
+      process.kill('SIGTERM');
+    }
   });
 
   it('should spawn & stop a session via HTTP (not testing RPC route, but similar enough)', async () => {
