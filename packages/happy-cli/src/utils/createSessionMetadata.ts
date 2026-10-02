@@ -15,6 +15,7 @@ import type { AgentState, Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
 import { projectPath } from '@/projectPath';
 import type { SandboxConfig } from '@/persistence';
+import { buildInitialSessionTitle } from './initialSessionTitle';
 import packageJson from '../../package.json';
 
 /**
@@ -54,7 +55,12 @@ export interface SessionMetadataResult {
     metadata: Metadata;
 }
 
-function getGitBranch(cwd: string): string | undefined {
+/**
+ * Current branch for `cwd`, or undefined when it is not a git checkout or is
+ * in detached HEAD. Exported so the Claude backend, which builds its metadata
+ * inline rather than through this factory, can label sessions the same way.
+ */
+export function getGitBranch(cwd: string): string | undefined {
     try {
         const branch = execSync('git rev-parse --abbrev-ref HEAD', {
             cwd,
@@ -111,6 +117,13 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: opts.flavor,
+        // Deterministic project label so the session is identifiable the moment it
+        // appears, instead of reading `New chat` until the agent calls
+        // change_title. An agent change_title call overwrites this.
+        summary: {
+            text: buildInitialSessionTitle(cwd, gitBranch),
+            updatedAt: Date.now(),
+        },
         sandbox: opts.sandbox?.enabled ? opts.sandbox : null,
         dangerouslySkipPermissions: opts.dangerouslySkipPermissions ?? null,
         ...(gitBranch ? { gitBranch } : {}),

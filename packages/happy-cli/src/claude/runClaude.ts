@@ -10,6 +10,8 @@ import { Credentials, readSettings } from '@/persistence';
 import { EnhancedMode, PermissionMode } from './loop';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
+import { buildInitialSessionTitle } from '@/utils/initialSessionTitle';
+import { getGitBranch } from '@/utils/createSessionMetadata';
 import { parseSpecialCommand } from '@/parsers/specialCommands';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { configuration } from '@/configuration';
@@ -146,6 +148,13 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: 'claude',
+        // Deterministic project label so the session is identifiable the moment it
+        // appears, instead of reading `New chat` until the agent calls
+        // change_title. An agent change_title call overwrites this.
+        summary: {
+            text: buildInitialSessionTitle(workingDirectory, getGitBranch(workingDirectory)),
+            updatedAt: Date.now(),
+        },
         sandbox: sandboxConfig?.enabled ? sandboxConfig : null,
         dangerouslySkipPermissions,
         ...(forkedFromSessionId ? { parentSessionId: forkedFromSessionId } : {}),
