@@ -11,7 +11,6 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync, execSync, spawn } from 'child_process';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
-import { homedir } from 'node:os';
 import { io } from 'socket.io-client';
 import type { Metadata } from '@/api/types';
 import { decodeBase64, decrypt, encrypt } from '@/api/encryption';
@@ -229,21 +228,46 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
   let daemonPid: number;
 
   // CONTAINMENT GATE. This suite calls stopDaemon() and overwrites
-  // configuration.sessionsFile. `configuration` is a module-load singleton that
-  // snapshots HAPPY_HOME_DIR at construction (configuration.ts:37-44) and
-  // otherwise defaults to the REAL ~/.happy. Isolation currently holds only
-  // because the setup file applies the environment (installIntegrationEnvironment
-  // :33) before this module imports configuration. A future import that pulls
-  // configuration in earlier would silently point this suite at the operator's
-  // live daemon and real sessions.json. Fail loudly here instead.
+  // configuration.sessionsFile, so if `configuration` ever resolves outside the
+  // per-run environment it stops a real daemon and rewrites a real sessions.json.
+  //
+  // `configuration` is a module-load singleton that snapshots HAPPY_HOME_DIR at
+  // construction (configuration.ts:37-44). Isolation holds only because the setup
+  // file applies the environment (installIntegrationEnvironment.ts:33) BEFORE this
+  // module imports configuration. Any future import that pulls configuration in
+  // earlier would silently aim this suite at the operator's live daemon.
+  //
+  // Do NOT reintroduce a comparison against a hardcoded home such as ~/.happy.
+  // HAPPY_HOME_DIR is routinely set to something else (this machine uses
+  // ~/.happy-mobile-cli), so a named-path check guards a path that may not even be
+  // in use and reads as more protection than it gives. The only honest assertion
+  // is containment: every path this suite acts on must resolve INSIDE the per-run
+  // environment directory. If it does, it cannot be any real home, whatever that
+  // home happens to be.
   beforeAll(() => {
     const env = getIntegrationEnv();
-    const isolatedHome = path.join(env.envDir, 'cli', 'home');
-    const realHome = path.join(homedir(), '.happy');
 
-    expect(configuration.happyHomeDir).not.toBe(realHome);
-    expect(configuration.happyHomeDir).toBe(isolatedHome);
-    expect(configuration.sessionsFile.startsWith(env.envDir)).toBe(true);
+    // path.relative, not startsWith: startsWith('/tmp/env1') also accepts
+    // '/tmp/env10', a sibling directory this suite has no business touching.
+    const containedInEnv = (target: string) => {
+      const rel = path.relative(env.envDir, path.resolve(target));
+      return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+    };
+
+    expect(configuration.happyHomeDir).toBe(path.join(env.envDir, 'cli', 'home'));
+
+    // Assert each path the suite actually reads or mutates, not just the home it
+    // was supposed to be derived from.
+    for (const target of [
+      configuration.happyHomeDir,
+      configuration.sessionsFile,
+      configuration.daemonStateFile,
+      configuration.daemonLockFile,
+      configuration.settingsFile,
+    ]) {
+      expect({ target, contained: containedInEnv(target) })
+        .toEqual({ target, contained: true });
+    }
   });
 
   beforeEach(async () => {
