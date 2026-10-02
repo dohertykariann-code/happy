@@ -97,6 +97,15 @@ function readProcessStartTime(pid: number): string {
   }).trim();
 }
 
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function findDeadPid(): number {
   for (let pid = process.pid + 1; pid < process.pid + 10_000; pid++) {
     try {
@@ -172,13 +181,48 @@ async function resumeViaMachineRpc(sessionId: string): Promise<{ error?: string;
 }
 
 async function restartDaemonWithPersistedSession(sessionId: string, owner: { pid: number; startedAt: string }): Promise<void> {
-  await stopDaemon().catch(() => undefined);
+  const previousDaemonPid = (await readDaemonState())?.pid;
+
+  // stopDaemon() intentionally absorbs its own transport and signal failures.
+  // Do not let that turn this restart into a no-op: a still-running daemon has
+  // already read sessions.json and cannot prove it loaded the fixture below.
+  await stopDaemon();
+  if (previousDaemonPid !== undefined) {
+    try {
+      await waitFor(async () => !isProcessAlive(previousDaemonPid), 10_000, 100);
+    } catch {
+      throw new Error(
+        `Daemon PID ${previousDaemonPid} remained alive after stopDaemon(); refusing to reuse its state for persisted-session fixture ${sessionId}.`,
+      );
+    }
+  }
+
   await clearDaemonState();
   writeFileSync(configuration.sessionsFile, JSON.stringify({
     sessions: { [sessionId]: persistedSession(owner) },
   }));
+
+  const fixtureWrittenAt = Date.now();
+  // `ps lstart` is precise to a second. Start on the next second so that its
+  // timestamp can prove this daemon booted after the fixture write, rather
+  // than merely observing an arbitrary existing daemon.state.json.
+  const earliestNewDaemonStart = Math.floor(fixtureWrittenAt / 1_000 + 1) * 1_000;
+  await new Promise(resolve => setTimeout(resolve, earliestNewDaemonStart - Date.now()));
+
   void spawnHappyCLI(['daemon', 'start'], { stdio: 'ignore' });
-  await waitFor(async () => (await readDaemonState()) !== null, 10_000, 250);
+  await waitFor(async () => {
+    const state = await readDaemonState();
+    if (!state || state.pid === previousDaemonPid || !isProcessAlive(state.pid)) {
+      return false;
+    }
+
+    try {
+      const startedAt = Date.parse(readProcessStartTime(state.pid));
+      return Number.isFinite(startedAt) && startedAt >= earliestNewDaemonStart;
+    } catch {
+      return false;
+    }
+  }, 10_000, 100);
 }
 
 describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
