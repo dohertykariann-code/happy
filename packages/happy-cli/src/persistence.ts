@@ -423,6 +423,17 @@ export type PersistedSession = {
   agentStateVersion: number;
   metadata: Metadata;
   savedAt: number;
+  /**
+   * OS pid that owned this session when it was persisted. Optional because
+   * records written before this field existed must still load.
+   */
+  hostPid?: number;
+  /**
+   * OS start time of hostPid, as an opaque string. Pairing pid with start time
+   * is what makes the owner identifiable after a restart: a pid alone can be
+   * reused by an unrelated process.
+   */
+  hostPidStartedAt?: string;
 };
 
 type SessionsFile = {

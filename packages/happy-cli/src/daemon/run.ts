@@ -37,6 +37,8 @@ import { startHappyTerminalDaemon } from './happyTerminalBoot';
 import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode } from './spawnModeArgs';
 import { buildOpenHandsLaunchPlan, isOpenHandsAgent } from './openhandsLaunchPlan';
 import { findTrackedSessionById, formatAmbiguousSessionStopError, getResumeOwnerConflict, probeProcessLiveness, ProcessLiveness, pruneDeadSessionClaims, resolveWebhookSessionClaim } from './sessionClaims';
+import { rehydrateLiveSessionClaims, buildPersistedSessionIdentity } from './rehydrateSessionClaims';
+import { readProcessStartTime } from './processIdentity';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
@@ -173,6 +175,14 @@ export async function startDaemon(): Promise<void> {
     const { credentials, machineId } = await authAndSetupMachineIfNeeded();
     logger.debug('[DAEMON RUN] Auth and machine setup complete');
 
+    const getProcessLiveness = (pid: number): ProcessLiveness => {
+      const liveness = probeProcessLiveness(pid, process.kill);
+      if (liveness === 'unknown') {
+        logger.warn(`[DAEMON RUN] Could not determine whether PID ${pid} is alive; retaining its session claim`);
+      }
+      return liveness;
+    };
+
     // Setup state - key by PID
     const pidToTrackedSession = new Map<number, TrackedSession>();
 
@@ -180,7 +190,33 @@ export async function startDaemon(): Promise<void> {
     // Pre-populate from disk so sessions survive daemon restarts.
     const sessionIdToFinishedSession = new Map<string, TrackedSession>();
     const persisted = readPersistedSessions();
+
+    // A restart used to empty the LIVE registry, so a session that was still
+    // running became invisible and a phone-initiated resume could spawn a
+    // second process for the same session id with nothing to conflict with
+    // (punch 9l). Rehydrate the live map first; only owners that are alive AND
+    // the same process incarnation qualify.
+    const rehydration = rehydrateLiveSessionClaims(
+      persisted,
+      getProcessLiveness,
+      (pid) => readProcessStartTime(pid),
+    );
+    for (const [pid, session] of rehydration.live) {
+      pidToTrackedSession.set(pid, session);
+    }
+    if (rehydration.live.size > 0) {
+      logger.debug(`[DAEMON RUN] Rehydrated ${rehydration.live.size} live session claim(s) from disk: PIDs ${[...rehydration.live.keys()].join(', ')}`);
+    }
+    for (const skipped of rehydration.notRehydrated) {
+      logger.debug(`[DAEMON RUN] Did not rehydrate session ${skipped.sessionId} as live: ${skipped.reason}`);
+    }
+
+    const rehydratedSessionIds = new Set(
+      [...rehydration.live.values()].map((s) => s.happySessionId),
+    );
     for (const [id, s] of Object.entries(persisted)) {
+      // A session rehydrated as LIVE must not also appear as finished.
+      if (rehydratedSessionIds.has(id)) continue;
       sessionIdToFinishedSession.set(id, {
         startedBy: 'persisted',
         happySessionId: id,
@@ -204,14 +240,6 @@ export async function startDaemon(): Promise<void> {
 
     // Helper functions
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
-
-    const getProcessLiveness = (pid: number): ProcessLiveness => {
-      const liveness = probeProcessLiveness(pid, process.kill);
-      if (liveness === 'unknown') {
-        logger.warn(`[DAEMON RUN] Could not determine whether PID ${pid} is alive; retaining its session claim`);
-      }
-      return liveness;
-    };
 
     // Handle webhook from happy session reporting itself
     const onHappySessionWebhook = (sessionId: string, sessionMetadata: Metadata, encryption?: SessionEncryptionData) => {
@@ -254,6 +282,7 @@ export async function startDaemon(): Promise<void> {
           agentStateVersion: encryption.agentStateVersion,
           metadata: sessionMetadata,
           savedAt: Date.now(),
+          ...buildPersistedSessionIdentity(pid, (p) => readProcessStartTime(p)),
         });
       }
 
