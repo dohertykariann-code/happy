@@ -9,8 +9,11 @@
  *   - `codex` CLI installed and on PATH (>= 0.100)
  *   - OPENAI_API_KEY (or equivalent) configured
  *
+ * These tests drive real paid Codex turns, so having the binary installed is
+ * not sufficient opt-in.
+ *
  * Run:
- *   npx vitest run src/codex/codex.integration.test.ts
+ *   HAPPY_RUN_CODEX_INTEGRATION_TESTS=1 npx vitest run src/codex/codex.integration.test.ts
  */
 
 import { afterEach, describe, it, expect } from "vitest";
@@ -23,6 +26,7 @@ import { getIntegrationEnv } from "@/testing/currentIntegrationEnv";
 
 const DEFAULT_MODEL = "gpt-5.2-codex";
 const integrationEnv = getIntegrationEnv();
+const RUN_CODEX_INTEGRATION_TESTS = process.env.HAPPY_RUN_CODEX_INTEGRATION_TESTS === "1";
 
 type PermissionPolicy = "approve" | "deny" | "cancel" | "hold";
 
@@ -206,7 +210,7 @@ class CodexDriver {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe.skipIf(!(await isCodexAppServerAvailable()))(
+describe.skipIf(!RUN_CODEX_INTEGRATION_TESTS || !(await isCodexAppServerAvailable()))(
     "Codex Integration (app-server)",
     { timeout: 180_000 },
     () => {
