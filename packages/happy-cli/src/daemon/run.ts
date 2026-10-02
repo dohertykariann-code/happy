@@ -19,6 +19,7 @@ import type { PersistedSession } from '@/persistence';
 
 import { cleanupDaemonState, isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
+import { generateControlToken } from './controlAuth';
 import { statSync } from 'fs';
 import { join } from 'path';
 import { projectPath } from '@/projectPath';
@@ -947,12 +948,14 @@ export async function startDaemon(): Promise<void> {
     };
 
     // Start control server
+    const controlToken = generateControlToken();
     const { port: controlPort, stop: stopControlServer } = await startDaemonControlServer({
       getChildren: getCurrentChildren,
       stopSession,
       spawnSession,
       requestShutdown: () => requestShutdown('happy-cli'),
-      onHappySessionWebhook
+      onHappySessionWebhook,
+      controlToken,
     });
 
     // Write initial daemon state (no lock needed for state file)
@@ -961,7 +964,8 @@ export async function startDaemon(): Promise<void> {
       httpPort: controlPort,
       startTime: new Date().toLocaleString(),
       startedWithCliVersion: packageJson.version,
-      daemonLogPath: logger.logFilePath
+      daemonLogPath: logger.logFilePath,
+      controlToken,
     };
     writeDaemonState(fileState);
     logger.debug('[DAEMON RUN] Daemon state written');
@@ -1097,7 +1101,8 @@ export async function startDaemon(): Promise<void> {
           startTime: fileState.startTime,
           startedWithCliVersion: packageJson.version,
           lastHeartbeat: new Date().toLocaleString(),
-          daemonLogPath: fileState.daemonLogPath
+          daemonLogPath: fileState.daemonLogPath,
+          controlToken,
         };
         writeDaemonState(updatedState);
         if (process.env.DEBUG) {
