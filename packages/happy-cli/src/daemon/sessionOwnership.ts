@@ -197,7 +197,13 @@ export function verifyClaimOwnership(
       case 'same': return 'owned';
       case 'reused':
       case 'gone': return 'released';
-      case 'unknown': return 'unverifiable';
+      // Identity unreadable. A definite 'dead' still proves nobody holds the
+      // PID and the previous pruner released on exactly that, so making `ps` a
+      // hard dependency for RELEASING a claim would strand a dead session. But
+      // an alive PID with unreadable identity is genuinely unknown ownership,
+      // NOT proof of ownership, so it must not be reported as owned.
+      case 'unknown':
+        return processLiveness(session.pid) === 'dead' ? 'released' : 'unverifiable';
     }
   }
   switch (processLiveness(session.pid)) {
@@ -225,4 +231,43 @@ export function pruneUnownedClaims(
     }
   }
   return released;
+}
+
+/**
+ * Builds or updates the live claim for an accepted webhook.
+ *
+ * The owner is attached to the IN-MEMORY claim here, not only to the persisted
+ * record. Persisting it alone left every freshly accepted session with no owner
+ * on the live claim, so all pre-restart decisions fell back to a bare liveness
+ * probe and a reused PID read as the original owner.
+ *
+ * Mutates and returns `existing` when given one, because the caller hands that
+ * same object to a waiting awaiter.
+ */
+export function applyAcceptedClaim(
+  existing: TrackedSession | undefined,
+  fields: {
+    pid: number;
+    sessionId: string;
+    metadata: TrackedSession['happySessionMetadataFromLocalWebhook'];
+    encryption?: TrackedSession['encryption'];
+    owner?: ProcessOwner;
+  },
+): TrackedSession {
+  if (existing) {
+    existing.happySessionId = fields.sessionId;
+    existing.happySessionMetadataFromLocalWebhook = fields.metadata;
+    existing.encryption = fields.encryption;
+    // Never overwrite a good owner with a failed measurement.
+    if (fields.owner) existing.owner = fields.owner;
+    return existing;
+  }
+  return {
+    startedBy: 'happy directly - likely by user from terminal',
+    happySessionId: fields.sessionId,
+    happySessionMetadataFromLocalWebhook: fields.metadata,
+    encryption: fields.encryption,
+    pid: fields.pid,
+    owner: fields.owner,
+  };
 }

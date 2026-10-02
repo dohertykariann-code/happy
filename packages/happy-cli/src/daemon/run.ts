@@ -36,7 +36,7 @@ import {
 import { startHappyTerminalDaemon } from './happyTerminalBoot';
 import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode } from './spawnModeArgs';
 import { buildOpenHandsLaunchPlan, isOpenHandsAgent } from './openhandsLaunchPlan';
-import { describeProcessOwner, pruneUnownedClaims, restorePersistedClaims, verifyClaimOwnership } from './sessionOwnership';
+import { applyAcceptedClaim, describeProcessOwner, pruneUnownedClaims, restorePersistedClaims, verifyClaimOwnership } from './sessionOwnership';
 import { findTrackedSessionById, formatAmbiguousSessionStopError, getResumeOwnerConflict, probeProcessLiveness, ProcessLiveness, resolveWebhookSessionClaim } from './sessionClaims';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
@@ -271,6 +271,12 @@ export async function startDaemon(): Promise<void> {
         return;
       }
 
+      // Measure the owning process ONCE. The same proof goes to disk, so a
+      // restart can restore the claim, AND onto the live claim, so decisions
+      // before any restart re-check identity instead of trusting a bare
+      // liveness probe that a reused PID also passes.
+      const owner = describeProcessOwner(pid);
+
       // Persist encryption data to disk so it survives daemon restarts. A
       // rejected claimant must never overwrite the accepted session's state.
       if (encryption) {
@@ -282,37 +288,33 @@ export async function startDaemon(): Promise<void> {
           agentStateVersion: encryption.agentStateVersion,
           metadata: sessionMetadata,
           savedAt: Date.now(),
-          // Record WHICH process owns the claim, so a restart can restore it
-          // instead of silently dropping every live session into untracked.
-          owner: describeProcessOwner(pid),
+          owner,
         });
       }
+
+      const claim = applyAcceptedClaim(existingSession, {
+        pid,
+        sessionId,
+        metadata: sessionMetadata,
+        encryption,
+        owner,
+      });
 
       if (existingSession) {
         // A process re-reporting its own session is expected during daemon
         // handoff/reconnect; it is not a duplicate claim.
-        existingSession.happySessionId = sessionId;
-        existingSession.happySessionMetadataFromLocalWebhook = sessionMetadata;
-        existingSession.encryption = encryption;
         logger.debug(`[DAEMON RUN] Updated tracked session ${sessionId} with metadata`);
 
         // Resolve any awaiter for this PID
         const awaiter = pidToAwaiter.get(pid);
         if (awaiter) {
           pidToAwaiter.delete(pid);
-          awaiter(existingSession);
+          awaiter(claim);
           logger.debug(`[DAEMON RUN] Resolved session awaiter for PID ${pid}`);
         }
-      } else if (!existingSession) {
+      } else {
         // New session started externally
-        const trackedSession: TrackedSession = {
-          startedBy: 'happy directly - likely by user from terminal',
-          happySessionId: sessionId,
-          happySessionMetadataFromLocalWebhook: sessionMetadata,
-          encryption,
-          pid
-        };
-        pidToTrackedSession.set(pid, trackedSession);
+        pidToTrackedSession.set(pid, claim);
         logger.debug(`[DAEMON RUN] Registered externally-started session ${sessionId}`);
       }
     };

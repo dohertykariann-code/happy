@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyAcceptedClaim,
   isValidPersistedOwner,
   pruneUnownedClaims,
   describeProcessOwner,
@@ -372,5 +373,80 @@ describe('restorePersistedClaims retains the ownership proof', () => {
     });
 
     expect(live.get(4242)?.owner).toEqual({ pid: 4242, startedAt });
+  });
+});
+
+// F5: a start-time probe failure returned 'unverifiable' without ever consulting
+// the liveness probe, so a claim whose owner was definitely DEAD became
+// unreleasable while ps was impaired. The old pruneDeadSessionClaims released on
+// a definite dead result, so this was a regression, not a new safety margin.
+describe('verifyClaimOwnership when the identity probe is broken', () => {
+  const owner = { pid: 4242, startedAt: 'Thu Oct  1 15:59:11 2026' };
+  const brokenProbe = () => { throw new Error('ps unavailable'); };
+
+  it('releases the claim when liveness still proves the PID is dead', () => {
+    expect(verifyClaimOwnership({ pid: 4242, owner }, () => 'dead', brokenProbe))
+      .toBe('released');
+  });
+
+  it('stays unverifiable when the PID is alive but identity cannot be checked', () => {
+    expect(verifyClaimOwnership({ pid: 4242, owner }, () => 'alive', brokenProbe))
+      .toBe('unverifiable');
+  });
+
+  it('stays unverifiable when neither probe can decide', () => {
+    expect(verifyClaimOwnership({ pid: 4242, owner }, () => 'unknown', brokenProbe))
+      .toBe('unverifiable');
+  });
+
+  it('lets the pruner release a dead owner even with a broken identity probe', () => {
+    const live = new Map<number, TrackedSession>([
+      [4242, { pid: 4242, happySessionId: 'session-1', startedBy: 'persisted', owner }],
+    ]);
+
+    expect(pruneUnownedClaims(live, () => 'dead', brokenProbe)).toEqual([4242]);
+    expect(live.size).toBe(0);
+  });
+});
+
+// F4: the webhook measured the owner, wrote it to DISK, and never attached it to
+// the in-memory claim. So every newly accepted live session had owner undefined
+// and fell back to liveness only, meaning F1 was closed for restored claims but
+// not for fresh ones. Combined with the F2 rule, a reused PID then also rejected
+// the legitimate new session.
+describe('applyAcceptedClaim', () => {
+  const owner = { pid: 4242, startedAt: 'Thu Oct  1 15:59:11 2026' };
+  const fields = {
+    pid: 4242,
+    sessionId: 'session-1',
+    metadata: { flavor: 'claude' } as never,
+    owner,
+  };
+
+  it('attaches the measured owner to a newly registered claim', () => {
+    expect(applyAcceptedClaim(undefined, fields).owner).toEqual(owner);
+  });
+
+  it('records no owner when identity could not be measured', () => {
+    expect(applyAcceptedClaim(undefined, { ...fields, owner: undefined }).owner)
+      .toBeUndefined();
+  });
+
+  // run.ts hands the SAME object to a waiting awaiter, so identity must hold.
+  it('updates an existing claim in place and attaches the owner', () => {
+    const existing: TrackedSession = { pid: 4242, startedBy: 'daemon' };
+
+    const result = applyAcceptedClaim(existing, fields);
+
+    expect(result).toBe(existing);
+    expect(result.happySessionId).toBe('session-1');
+    expect(result.owner).toEqual(owner);
+  });
+
+  it('keeps a previously measured owner when the new measurement failed', () => {
+    const existing: TrackedSession = { pid: 4242, startedBy: 'daemon', owner };
+
+    expect(applyAcceptedClaim(existing, { ...fields, owner: undefined }).owner)
+      .toEqual(owner);
   });
 });
