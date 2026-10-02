@@ -15,6 +15,7 @@ const ENVIRONMENTS_DATA_DIR = path.join(ENVIRONMENTS_ROOT, "data");
 const ENVIRONMENTS_DIR = path.join(ENVIRONMENTS_DATA_DIR, "envs");
 const CURRENT_ENV_PATH = path.join(ENVIRONMENTS_DATA_DIR, "current.json");
 const LAB_RAT_PROJECT_TEMPLATE_DIR = path.join(ENVIRONMENTS_ROOT, "lab-rat-todo-project");
+const TSX_BIN = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
 
 // ============================================================================
 // Name generation (expanded from packages/happy-app/sources/utils/generateWorktreeName.ts)
@@ -305,7 +306,7 @@ export async function createEnvironment(opts?: { noSwitch?: boolean }): Promise<
     const migrationEnv = buildEnvVars(envDir, serverPort, expoPort);
     const standaloneTs = path.join(REPO_ROOT, "packages", "happy-server", "sources", "standalone.ts");
     const result = spawnSync(
-        "tsx",
+        TSX_BIN,
         [standaloneTs, "migrate"],
         {
             cwd: path.join(REPO_ROOT, "packages", "happy-server"),
@@ -345,7 +346,7 @@ export async function createEnvironment(opts?: { noSwitch?: boolean }): Promise<
     return name;
 }
 
-export async function startEnvironmentServices(name: string): Promise<void> {
+export async function startEnvironmentServices(name: string, options?: { web?: boolean }): Promise<void> {
     const envDir = getEnvironmentDir(name);
     const config = readEnvironmentConfig(name);
     const envVars = buildEnvVars(envDir, config.serverPort, config.expoPort);
@@ -353,7 +354,7 @@ export async function startEnvironmentServices(name: string): Promise<void> {
 
     const serverLogFile = path.join(envDir, "server", "stdout.log");
     console.log(`Starting server on port ${config.serverPort}...`);
-    const serverPid = spawnService("pnpm", ["standalone", "serve"], {
+    const serverPid = spawnService(TSX_BIN, ["sources/standalone.ts", "serve"], {
         cwd: path.join(REPO_ROOT, "packages", "happy-server"),
         env: mergedEnv,
         logFile: serverLogFile,
@@ -370,6 +371,10 @@ export async function startEnvironmentServices(name: string): Promise<void> {
         throw new Error(`Server failed to start. Check logs: ${serverLogFile}`);
     }
     console.log(`  Server is healthy.`);
+
+    if (options?.web === false) {
+        return;
+    }
 
     const webLogFile = path.join(envDir, "web", "stdout.log");
     fs.mkdirSync(path.join(envDir, "web"), { recursive: true });

@@ -134,3 +134,40 @@ describe('session claim resolution', () => {
     expect(claims).toHaveLength(1);
   });
 });
+
+// F2: resolveSessionClaim skipped any entry sharing the reporting PID without
+// checking its session id, so a webhook reporting a DIFFERENT session id for a
+// PID that already owned one was accepted, and the webhook handler then
+// overwrote the live claim's id/metadata/encryption. The original session lost
+// its live claimant and became duplicate-resumable while still running.
+// hostPid is untrusted input from an unauthenticated control server.
+describe('same-PID re-reports must prove the session id too', () => {
+  it('rejects a same-PID webhook that reports a different session id', () => {
+    const claims = new Map([[101, session(101, 'session-A')]]);
+
+    expect(resolveWebhookSessionClaim(claims, 'session-B', 101, () => 'alive')).toEqual({
+      type: 'rejected',
+      claimantPids: [101],
+    });
+    // The real session A must still own the claim, untouched.
+    expect(claims.get(101)?.happySessionId).toBe('session-A');
+  });
+
+  it('still accepts a same-PID re-report of the same session id as handoff', () => {
+    const claims = new Map([[101, session(101, 'session-A')]]);
+
+    expect(resolveWebhookSessionClaim(claims, 'session-A', 101, () => 'alive'))
+      .toEqual({ type: 'accepted' });
+  });
+
+  // The daemon sets a placeholder with no happySessionId at spawn time and the
+  // webhook fills it in. That flow must keep working.
+  it('accepts a webhook for a daemon placeholder that has no session id yet', () => {
+    const claims = new Map<number, TrackedSession>([
+      [101, { pid: 101, startedBy: 'daemon' }],
+    ]);
+
+    expect(resolveWebhookSessionClaim(claims, 'session-A', 101, () => 'alive'))
+      .toEqual({ type: 'accepted' });
+  });
+});

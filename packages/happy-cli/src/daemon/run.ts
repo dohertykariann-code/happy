@@ -36,7 +36,8 @@ import {
 import { startHappyTerminalDaemon } from './happyTerminalBoot';
 import { appendDaemonSpawnModeArgs, shouldForwardDaemonPermissionMode } from './spawnModeArgs';
 import { buildOpenHandsLaunchPlan, isOpenHandsAgent } from './openhandsLaunchPlan';
-import { findTrackedSessionById, formatAmbiguousSessionStopError, getResumeOwnerConflict, probeProcessLiveness, ProcessLiveness, pruneDeadSessionClaims, resolveWebhookSessionClaim } from './sessionClaims';
+import { applyAcceptedClaim, describeProcessOwner, pruneUnownedClaims, restorePersistedClaims, verifyClaimOwnership } from './sessionOwnership';
+import { findTrackedSessionById, formatAmbiguousSessionStopError, getResumeOwnerConflict, probeProcessLiveness, ProcessLiveness, resolveWebhookSessionClaim } from './sessionClaims';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
@@ -199,6 +200,24 @@ export async function startDaemon(): Promise<void> {
       logger.debug(`[DAEMON RUN] Loaded ${Object.keys(persisted).length} persisted sessions from disk`);
     }
 
+    // A restart used to empty the live claim registry outright, which is what
+    // let a later resume spawn a SECOND process for a session id that was still
+    // running, with nothing left in the map to conflict with. Restore the claims
+    // whose owning process is provably the same one; anything unverifiable is
+    // deliberately left out rather than guessed at.
+    const droppedClaims = restorePersistedClaims({
+      persisted,
+      sessionIdToFinishedSession,
+      pidToTrackedSession,
+    });
+    if (pidToTrackedSession.size > 0) {
+      logger.debug(`[DAEMON RUN] Restored ${pidToTrackedSession.size} live session claim(s) owned by PIDs ${[...pidToTrackedSession.keys()].join(', ')}`);
+    }
+    if (droppedClaims.length > 0) {
+      const summary = droppedClaims.map(d => `${d.sessionId}=${d.reason}`).join(', ');
+      logger.debug(`[DAEMON RUN] Did not restore ${droppedClaims.length} session claim(s): ${summary}`);
+    }
+
     // Session spawning awaiter system
     const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
 
@@ -226,6 +245,15 @@ export async function startDaemon(): Promise<void> {
       logger.debug(`[DAEMON RUN] Session webhook: ${sessionId}, PID: ${pid}, started by: ${sessionMetadata.startedBy || 'unknown'}, hasEncryption: ${!!encryption}`);
       logger.debug(`[DAEMON RUN] Current tracked sessions before webhook: ${Array.from(pidToTrackedSession.keys()).join(', ')}`);
 
+      // Release claims whose recorded owner no longer holds the PID before
+      // deciding anything. A liveness probe alone passes for a reused PID, and a
+      // stale claim left in the map would wrongly reject a genuine new session
+      // that the OS happened to give the same PID.
+      const releasedPids = pruneUnownedClaims(pidToTrackedSession, getProcessLiveness);
+      if (releasedPids.length > 0) {
+        logger.debug(`[DAEMON RUN] Released ${releasedPids.length} claim(s) whose owner no longer holds the PID: ${releasedPids.join(', ')}`);
+      }
+
       // Check if we already have this PID (daemon-spawned or a self re-report).
       const existingSession = pidToTrackedSession.get(pid);
 
@@ -243,6 +271,12 @@ export async function startDaemon(): Promise<void> {
         return;
       }
 
+      // Measure the owning process ONCE. The same proof goes to disk, so a
+      // restart can restore the claim, AND onto the live claim, so decisions
+      // before any restart re-check identity instead of trusting a bare
+      // liveness probe that a reused PID also passes.
+      const owner = describeProcessOwner(pid);
+
       // Persist encryption data to disk so it survives daemon restarts. A
       // rejected claimant must never overwrite the accepted session's state.
       if (encryption) {
@@ -254,34 +288,33 @@ export async function startDaemon(): Promise<void> {
           agentStateVersion: encryption.agentStateVersion,
           metadata: sessionMetadata,
           savedAt: Date.now(),
+          owner,
         });
       }
+
+      const claim = applyAcceptedClaim(existingSession, {
+        pid,
+        sessionId,
+        metadata: sessionMetadata,
+        encryption,
+        owner,
+      });
 
       if (existingSession) {
         // A process re-reporting its own session is expected during daemon
         // handoff/reconnect; it is not a duplicate claim.
-        existingSession.happySessionId = sessionId;
-        existingSession.happySessionMetadataFromLocalWebhook = sessionMetadata;
-        existingSession.encryption = encryption;
         logger.debug(`[DAEMON RUN] Updated tracked session ${sessionId} with metadata`);
 
         // Resolve any awaiter for this PID
         const awaiter = pidToAwaiter.get(pid);
         if (awaiter) {
           pidToAwaiter.delete(pid);
-          awaiter(existingSession);
+          awaiter(claim);
           logger.debug(`[DAEMON RUN] Resolved session awaiter for PID ${pid}`);
         }
-      } else if (!existingSession) {
+      } else {
         // New session started externally
-        const trackedSession: TrackedSession = {
-          startedBy: 'happy directly - likely by user from terminal',
-          happySessionId: sessionId,
-          happySessionMetadataFromLocalWebhook: sessionMetadata,
-          encryption,
-          pid
-        };
-        pidToTrackedSession.set(pid, trackedSession);
+        pidToTrackedSession.set(pid, claim);
         logger.debug(`[DAEMON RUN] Registered externally-started session ${sessionId}`);
       }
     };
@@ -763,8 +796,14 @@ export async function startDaemon(): Promise<void> {
         }
         const tracked = lookup.session;
         if (pidToTrackedSession.get(tracked.pid) === tracked) {
-          const liveness = getProcessLiveness(tracked.pid);
-          const ownerConflict = getResumeOwnerConflict(tracked.pid, liveness);
+          // Ownership, not liveness. An unrelated process holding a reused PID
+          // reads as alive, and a restored claim cannot be cleared through
+          // stopSession, so trusting liveness here made the session unresumable
+          // until the next daemon restart.
+          const ownership = verifyClaimOwnership(tracked, getProcessLiveness);
+          const ownerConflict = ownership === 'released'
+            ? undefined
+            : getResumeOwnerConflict(tracked.pid, ownership === 'owned' ? 'alive' : 'unknown');
           if (ownerConflict) {
             return {
               type: 'error',
@@ -994,9 +1033,9 @@ export async function startDaemon(): Promise<void> {
       }
 
       // Prune stale sessions
-      const deadPids = pruneDeadSessionClaims(pidToTrackedSession, getProcessLiveness);
+      const deadPids = pruneUnownedClaims(pidToTrackedSession, getProcessLiveness);
       for (const pid of deadPids) {
-        logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists)`);
+        logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (owner no longer holds it)`);
       }
 
       // Check if daemon needs update by detecting whether `dist/index.mjs` was

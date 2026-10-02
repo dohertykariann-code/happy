@@ -6,18 +6,27 @@
  */
 
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 export async function setup() {
     process.env.VITEST_POOL_TIMEOUT = '60000'
     process.env.HAPPY_RUN_SANDBOX_NETWORK_TESTS = '1'
+    const tmpDir = mkdtempSync(join(tmpdir(), 'happy-vitest-'))
+    process.env.TMPDIR = tmpDir
+    const binDir = join(process.cwd(), '..', '..', 'node_modules', '.bin')
 
-    const buildResult = spawnSync('pnpm', ['build'], { stdio: 'pipe' })
-    if (buildResult.stderr && buildResult.stderr.length > 0) {
-        const errorOutput = buildResult.stderr.toString()
-        console.error(`Build stderr (could be debugger output): ${errorOutput}`)
-        console.log(`Build stdout: ${buildResult.stdout.toString()}`)
-        if (errorOutput.includes('Command failed with exit code')) {
-            throw new Error(`Build failed STDERR: ${errorOutput}`)
+    const commands = [
+        ['tsc', ['--noEmit']],
+        ['pkgroll', []],
+    ] as const
+    for (const [command, args] of commands) {
+        const buildResult = spawnSync(join(binDir, command), args, { stdio: 'pipe', env: process.env })
+        if (buildResult.status !== 0) {
+            const errorOutput = buildResult.stderr?.toString() || ''
+            const standardOutput = buildResult.stdout?.toString() || ''
+            throw new Error(`CLI build step ${command} failed: ${errorOutput || standardOutput}`)
         }
     }
 }

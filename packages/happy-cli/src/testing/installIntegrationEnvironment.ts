@@ -10,6 +10,7 @@ import {
 type IntegrationEnvironmentProfile = {
     template: EnvironmentTemplate;
     up: boolean;
+    web?: boolean;
 };
 
 declare global {
@@ -25,6 +26,7 @@ export async function installIntegrationEnvironment(profile: IntegrationEnvironm
         HAPPY_PROJECT_DIR: process.env.HAPPY_PROJECT_DIR,
         HAPPY_VARIANT: process.env.HAPPY_VARIANT,
         DEBUG: process.env.DEBUG,
+        TMPDIR: process.env.TMPDIR,
     };
 
     const env = await createIntegrationEnvironment(profile);

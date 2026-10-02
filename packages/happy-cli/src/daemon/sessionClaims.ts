@@ -66,7 +66,18 @@ export function resolveSessionClaim(
   const claimantPids: number[] = [];
 
   for (const [claimedPid, claimedSession] of pidToTrackedSession.entries()) {
-    if (claimedPid === reportingPid || claimedSession.happySessionId !== sessionId) continue;
+    if (claimedPid === reportingPid) {
+      // A PID re-reporting itself is a handoff ONLY if it is the same session,
+      // or a daemon placeholder that has no session id yet. Skipping on PID
+      // alone let an untrusted webhook retag a live claim to another session
+      // id, which stripped the original session of its claimant and left it
+      // duplicate-resumable while still running.
+      if (claimedSession.happySessionId === undefined
+        || claimedSession.happySessionId === sessionId) continue;
+      claimantPids.push(claimedPid);
+      continue;
+    }
+    if (claimedSession.happySessionId !== sessionId) continue;
     if (processLiveness(claimedPid) !== 'dead') {
       claimantPids.push(claimedPid);
     } else {
