@@ -27,6 +27,21 @@ function createSandboxConfig(overrides: Partial<SandboxConfig> = {}): SandboxCon
 }
 
 describe('createSessionMetadata', () => {
+    it('stamps a deterministic project-label title at creation', () => {
+        mockedExecSync.mockReturnValue('fix/session-title\n');
+        const { metadata } = createSessionMetadata({ flavor: 'codex', machineId: 'm1' });
+        const project = process.cwd().split('/').filter(Boolean).pop();
+        expect(metadata.summary?.text).toBe(`${project} \u00b7 fix/session-title`);
+        expect(metadata.summary?.updatedAt).toBeGreaterThan(0);
+    });
+
+    it('falls back to the project name alone when there is no branch', () => {
+        mockedExecSync.mockImplementation(() => { throw new Error('not a git repo'); });
+        const { metadata } = createSessionMetadata({ flavor: 'codex', machineId: 'm1' });
+        const project = process.cwd().split('/').filter(Boolean).pop();
+        expect(metadata.summary?.text).toBe(project);
+    });
+
     beforeEach(() => {
         mockedExecSync.mockReset();
         mockedExecSync.mockReturnValue('main\n');
