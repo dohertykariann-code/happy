@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { acquireDaemonLock, releaseDaemonLock, SandboxConfigSchema } from './persistence';
+import { acquireDaemonLock, releaseDaemonLock, SandboxConfigSchema, writeDaemonState } from './persistence';
 
 const mockConfiguration = vi.hoisted(() => ({
     daemonLockFile: '',
@@ -132,5 +132,41 @@ describe('acquireDaemonLock', () => {
 
         expect(lockHandle).toBeNull();
         expect(readFileSync(mockConfiguration.daemonLockFile, 'utf-8')).toBe(String(process.pid));
+    });
+});
+
+describe('writeDaemonState', () => {
+    let testDir: string;
+
+    beforeEach(() => {
+        testDir = mkdtempSync(join(tmpdir(), 'happy-daemon-state-'));
+        mockConfiguration.daemonStateFile = join(testDir, 'daemon.state.json');
+    });
+
+    afterEach(() => {
+        rmSync(testDir, { recursive: true, force: true });
+    });
+
+    const daemonState = {
+        pid: process.pid,
+        httpPort: 12345,
+        startTime: 'now',
+        startedWithCliVersion: 'test',
+        controlToken: 'token',
+    };
+
+    it('writes a freshly created daemon state file as 0600', () => {
+        writeDaemonState(daemonState);
+
+        expect(statSync(mockConfiguration.daemonStateFile).mode & 0o777).toBe(0o600);
+    });
+
+    it('tightens a pre-existing daemon state file to 0600', () => {
+        writeFileSync(mockConfiguration.daemonStateFile, '{}', { mode: 0o644 });
+        expect(statSync(mockConfiguration.daemonStateFile).mode & 0o777).toBe(0o644);
+
+        writeDaemonState(daemonState);
+
+        expect(statSync(mockConfiguration.daemonStateFile).mode & 0o777).toBe(0o600);
     });
 });

@@ -11,36 +11,76 @@ import { Metadata } from '@/api/types';
 import { decodeBase64 } from '@/api/encryption';
 import { TrackedSession, SessionEncryptionData } from './types';
 import { SpawnSessionOptions, SpawnSessionResult } from '@/modules/common/registerCommonHandlers';
+import { controlTokensMatch, extractBearerToken } from './controlAuth';
 
-export function startDaemonControlServer({
-  getChildren,
-  stopSession,
-  spawnSession,
-  requestShutdown,
-  onHappySessionWebhook
-}: {
+type DaemonControlServerOptions = {
   getChildren: () => TrackedSession[];
   stopSession: (sessionId: string) => { success: boolean; error?: string };
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata, encryption?: SessionEncryptionData) => void;
-}): Promise<{ port: number; stop: () => Promise<void> }> {
+  controlToken: string;
+};
+
+export function startDaemonControlServer(options: DaemonControlServerOptions): Promise<{ port: number; stop: () => Promise<void> }> {
+  const app = createDaemonControlServer(options);
   return new Promise((resolve) => {
-    const app = fastify({
-      logger: false // We use our own logger
+    app.listen({ port: 0, host: '127.0.0.1' }, (err, address) => {
+      if (err) {
+        logger.debug('[CONTROL SERVER] Failed to start:', err);
+        throw err;
+      }
+
+      const port = parseInt(address.split(':').pop()!);
+      logger.debug(`[CONTROL SERVER] Started on port ${port}`);
+
+      resolve({
+        port,
+        stop: async () => {
+          logger.debug('[CONTROL SERVER] Stopping server');
+          await app.close();
+          logger.debug('[CONTROL SERVER] Server stopped');
+        }
+      });
     });
+  });
+}
+
+export function createDaemonControlServer({
+  getChildren,
+  stopSession,
+  spawnSession,
+  requestShutdown,
+  onHappySessionWebhook,
+  controlToken,
+}: DaemonControlServerOptions): FastifyInstance {
+  const app = fastify({
+      logger: false // We use our own logger
+  });
 
     // Set up Zod type provider
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>();
 
+    app.addHook('onRequest', (request, reply, done) => {
+      const providedToken = extractBearerToken(request.headers.authorization);
+      if (!controlTokensMatch(controlToken, providedToken)) {
+        reply.code(401).send({ error: 'Unauthorized' });
+        return;
+      }
+      done();
+    });
+
     // Session reports itself after creation
     typed.post('/session-started', {
       schema: {
         body: z.object({
           sessionId: z.string(),
-          metadata: z.any(),
+          metadata: z.object({
+            hostPid: z.number().int().positive().optional(),
+            startedBy: z.enum(['daemon', 'terminal']).optional(),
+          }).passthrough(),
           encryption: z.object({
             encryptionKey: z.string(),
             encryptionVariant: z.enum(['legacy', 'dataKey']),
@@ -71,7 +111,7 @@ export function startDaemonControlServer({
         };
       }
 
-      onHappySessionWebhook(sessionId, metadata, encryptionData);
+      onHappySessionWebhook(sessionId, metadata as Metadata, encryptionData);
 
       return { status: 'ok' as const };
     });
@@ -214,23 +254,5 @@ export function startDaemonControlServer({
       return { status: 'stopping' };
     });
 
-    app.listen({ port: 0, host: '127.0.0.1' }, (err, address) => {
-      if (err) {
-        logger.debug('[CONTROL SERVER] Failed to start:', err);
-        throw err;
-      }
-
-      const port = parseInt(address.split(':').pop()!);
-      logger.debug(`[CONTROL SERVER] Started on port ${port}`);
-
-      resolve({
-        port,
-        stop: async () => {
-          logger.debug('[CONTROL SERVER] Stopping server');
-          await app.close();
-          logger.debug('[CONTROL SERVER] Server stopped');
-        }
-      });
-    });
-  });
+  return app;
 }
