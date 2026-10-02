@@ -25,6 +25,12 @@ import {
 import { clearDaemonState, readDaemonState } from '@/persistence';
 import { getLatestDaemonLog } from '@/ui/logger';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
+import {
+  assertRealAgentSpawnTestsEnabled,
+  shouldRunRealAgentSpawnTests,
+} from '@/testing/realAgentSpawnTestGate';
+
+const RUN_REAL_AGENT_SPAWN_TESTS = shouldRunRealAgentSpawnTests();
 
 // Utility to wait for condition
 async function waitFor(
@@ -235,7 +241,11 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
     }
   });
 
-  it('should spawn & stop a session via HTTP (not testing RPC route, but similar enough)', async () => {
+  // These tests launch real Claude sessions through the daemon. Five observed runs used
+  // 3,681,766 cache-read tokens, 723,173 cache-creation tokens, and 32,520 output tokens.
+  // Keep them opt-in so ordinary integration runs do not consume Max-subscription quota.
+  it.skipIf(!RUN_REAL_AGENT_SPAWN_TESTS)('should spawn & stop a session via HTTP (not testing RPC route, but similar enough)', async () => {
+    assertRealAgentSpawnTestsEnabled();
     const response = await spawnDaemonSession(integrationEnv.projectPath, 'spawned-test-456');
 
     expect(response).toHaveProperty('success', true);
@@ -255,7 +265,8 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
     await stopDaemonSession(spawnedSession.happySessionId);
   });
 
-  it('stress test: spawn / stop', { timeout: 60_000 }, async () => {
+  it.skipIf(!RUN_REAL_AGENT_SPAWN_TESTS)('stress test: spawn / stop', { timeout: 60_000 }, async () => {
+    assertRealAgentSpawnTestsEnabled();
     const promises = [];
     const sessionCount = 20;
     for (let i = 0; i < sessionCount; i++) {
@@ -285,7 +296,8 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
     await waitFor(async () => !existsSync(configuration.daemonStateFile), 1000);
   });
 
-  it('should track both daemon-spawned and terminal sessions', async () => {
+  it.skipIf(!RUN_REAL_AGENT_SPAWN_TESTS)('should track both daemon-spawned and terminal sessions', async () => {
+    assertRealAgentSpawnTestsEnabled();
     // Spawn a real happy process that looks like it was started from terminal
     const terminalHappyProcess = spawnHappyCLI([
       '--happy-starting-mode', 'remote',
@@ -334,7 +346,8 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
     }
   });
 
-  it('should update session metadata when webhook is called', async () => {
+  it.skipIf(!RUN_REAL_AGENT_SPAWN_TESTS)('should update session metadata when webhook is called', async () => {
+    assertRealAgentSpawnTestsEnabled();
     // Spawn a session
     const spawnResponse = await spawnDaemonSession(integrationEnv.projectPath);
 
@@ -373,7 +386,8 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
     expect(output).toContain('already running');
   });
 
-  it('should handle concurrent session operations', async () => {
+  it.skipIf(!RUN_REAL_AGENT_SPAWN_TESTS)('should handle concurrent session operations', async () => {
+    assertRealAgentSpawnTestsEnabled();
     // Spawn multiple sessions concurrently
     const promises = [];
     for (let i = 0; i < 3; i++) {
