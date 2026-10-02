@@ -7,11 +7,14 @@
  * inside that env for each test against the copied lab-rat project.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { execSync, spawn } from 'child_process';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { execFileSync, execSync, spawn } from 'child_process';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
+import { homedir } from 'node:os';
+import { io } from 'socket.io-client';
 import type { Metadata } from '@/api/types';
+import { decodeBase64, decrypt, encrypt } from '@/api/encryption';
 import { getIntegrationEnv } from '@/testing/currentIntegrationEnv';
 import { configuration } from '@/configuration';
 import {
@@ -22,7 +25,7 @@ import {
   stopDaemonHttp,
   stopDaemonSession,
 } from '@/daemon/controlClient';
-import { clearDaemonState, readDaemonState } from '@/persistence';
+import { clearDaemonState, readCredentials, readDaemonState, readSettings } from '@/persistence';
 import { getLatestDaemonLog } from '@/ui/logger';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 
@@ -87,8 +90,117 @@ function terminalMetadata(hostPid: number): Metadata {
   };
 }
 
+function readProcessStartTime(pid: number): string {
+  return execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
+}
+
+function findDeadPid(): number {
+  for (let pid = process.pid + 1; pid < process.pid + 10_000; pid++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return pid;
+    }
+  }
+  throw new Error('Could not find a non-running PID for the dead-owner fixture');
+}
+
+function persistedSession(owner: { pid: number; startedAt: string }) {
+  return {
+    owner,
+    encryptionKey: Buffer.alloc(32).toString('base64'),
+    encryptionVariant: 'legacy' as const,
+    seq: 0,
+    metadataVersion: 0,
+    agentStateVersion: 0,
+    metadata: {
+      ...terminalMetadata(owner.pid),
+      path: integrationEnv.projectPath,
+      flavor: 'unsupported-test-flavor',
+    },
+    savedAt: Date.now(),
+  };
+}
+
+async function resumeViaMachineRpc(sessionId: string): Promise<{ error?: string; type?: string; errorMessage?: string }> {
+  const [credentials, settings] = await Promise.all([readCredentials(), readSettings()]);
+  if (!credentials || !settings.machineId) {
+    throw new Error('Integration environment has no machine credentials');
+  }
+
+  const encryptionKey = credentials.encryption.type === 'legacy'
+    ? credentials.encryption.secret
+    : credentials.encryption.machineKey;
+  const encryptionVariant = credentials.encryption.type === 'legacy' ? 'legacy' : 'dataKey';
+  const socket = io(configuration.serverUrl, {
+    path: '/v1/updates',
+    auth: { token: credentials.token, clientType: 'user-scoped' },
+    transports: ['websocket'],
+    reconnection: false,
+  });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Timed out connecting RPC caller')), 10_000);
+      socket.once('connect', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      socket.once('connect_error', error => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+    });
+    const response = await socket.timeout(20_000).emitWithAck('rpc-call', {
+      method: `${settings.machineId}:resume-happy-session`,
+      params: Buffer.from(encrypt(encryptionKey, encryptionVariant, { sessionId })).toString('base64'),
+    });
+    if (!response.ok) {
+      throw new Error(response.error || 'Machine RPC failed');
+    }
+    return decrypt(
+      encryptionKey,
+      encryptionVariant,
+      decodeBase64(response.result),
+    ) as { error?: string; type?: string; errorMessage?: string };
+  } finally {
+    socket.disconnect();
+  }
+}
+
+async function restartDaemonWithPersistedSession(sessionId: string, owner: { pid: number; startedAt: string }): Promise<void> {
+  await stopDaemon().catch(() => undefined);
+  await clearDaemonState();
+  writeFileSync(configuration.sessionsFile, JSON.stringify({
+    sessions: { [sessionId]: persistedSession(owner) },
+  }));
+  void spawnHappyCLI(['daemon', 'start'], { stdio: 'ignore' });
+  await waitFor(async () => (await readDaemonState()) !== null, 10_000, 250);
+}
+
 describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
   let daemonPid: number;
+
+  // CONTAINMENT GATE. This suite calls stopDaemon() and overwrites
+  // configuration.sessionsFile. `configuration` is a module-load singleton that
+  // snapshots HAPPY_HOME_DIR at construction (configuration.ts:37-44) and
+  // otherwise defaults to the REAL ~/.happy. Isolation currently holds only
+  // because the setup file applies the environment (installIntegrationEnvironment
+  // :33) before this module imports configuration. A future import that pulls
+  // configuration in earlier would silently point this suite at the operator's
+  // live daemon and real sessions.json. Fail loudly here instead.
+  beforeAll(() => {
+    const env = getIntegrationEnv();
+    const isolatedHome = path.join(env.envDir, 'cli', 'home');
+    const realHome = path.join(homedir(), '.happy');
+
+    expect(configuration.happyHomeDir).not.toBe(realHome);
+    expect(configuration.happyHomeDir).toBe(isolatedHome);
+    expect(configuration.sessionsFile.startsWith(env.envDir)).toBe(true);
+  });
 
   beforeEach(async () => {
     await stopAllTrackedSessions().catch(() => undefined);
@@ -121,6 +233,56 @@ describe('Daemon Integration Tests', { timeout: 180_000 }, () => {
   it('should list sessions (initially empty)', async () => {
     const sessions = await listDaemonSessions();
     expect(sessions).toEqual([]);
+  });
+
+  it('restores a persisted live owner and refuses a resume through the daemon RPC', async () => {
+    const owner = spawnLiveSessionProcess();
+    const sessionId = 'persisted-live-owner';
+
+    try {
+      const startedAt = readProcessStartTime(owner.pid!);
+      expect(startedAt).not.toBe('');
+      await restartDaemonWithPersistedSession(sessionId, { pid: owner.pid!, startedAt });
+
+      const result = await resumeViaMachineRpc(sessionId);
+      expect(result).toMatchObject({
+        error: `Session is still owned by live PID ${owner.pid}; stop it before resuming.`,
+      });
+    } finally {
+      owner.kill('SIGTERM');
+    }
+  });
+
+  it('does not restore a persisted dead owner into a resume-blocking claim', async () => {
+    const sessionId = 'persisted-dead-owner';
+    await restartDaemonWithPersistedSession(sessionId, {
+      pid: findDeadPid(),
+      startedAt: 'Thu Jan  1 00:00:00 1970',
+    });
+
+    const result = await resumeViaMachineRpc(sessionId);
+    expect(result.error).not.toContain('still owned by');
+    expect(result.error).toContain('unsupported flavor');
+  });
+
+  it('does not restore a persisted owner whose live PID has a different start time', async () => {
+    const owner = spawnLiveSessionProcess();
+    const sessionId = 'persisted-reused-pid';
+
+    try {
+      const actualStartTime = readProcessStartTime(owner.pid!);
+      expect(actualStartTime).not.toBe('');
+      await restartDaemonWithPersistedSession(sessionId, {
+        pid: owner.pid!,
+        startedAt: `${actualStartTime} mismatched`,
+      });
+
+      const result = await resumeViaMachineRpc(sessionId);
+      expect(result.error).not.toContain('still owned by');
+      expect(result.error).toContain('unsupported flavor');
+    } finally {
+      owner.kill('SIGTERM');
+    }
   });
 
   it('should track session-started webhook from terminal session', async () => {

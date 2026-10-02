@@ -65,10 +65,27 @@ export default defineConfig({
                     minWorkers: 1,
                     testTimeout: 60_000,
                     include: [
-                        'src/daemon/daemon.integration.test.ts',
                         'src/openclaw/openclaw.integration.test.ts',
                     ],
                     setupFiles: ['./src/testing/integration.setup.authenticated.ts'],
+                    sequence: {
+                        groupOrder: 2,
+                    },
+                },
+            },
+            {
+                extends: true,
+                test: {
+                    name: 'integration-daemon',
+                    fileParallelism: false,
+                    hookTimeout: 120_000,
+                    maxWorkers: 1,
+                    minWorkers: 1,
+                    testTimeout: 60_000,
+                    include: [
+                        'src/daemon/daemon.integration.test.ts',
+                    ],
+                    setupFiles: ['./src/testing/integration.setup.daemon.ts'],
                     sequence: {
                         groupOrder: 2,
                     },
