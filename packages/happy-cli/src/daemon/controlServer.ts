@@ -55,204 +55,204 @@ export function createDaemonControlServer({
   controlToken,
 }: DaemonControlServerOptions): FastifyInstance {
   const app = fastify({
-      logger: false // We use our own logger
+    logger: false // We use our own logger
   });
 
-    // Set up Zod type provider
-    app.setValidatorCompiler(validatorCompiler);
-    app.setSerializerCompiler(serializerCompiler);
-    const typed = app.withTypeProvider<ZodTypeProvider>();
+  // Set up Zod type provider
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  const typed = app.withTypeProvider<ZodTypeProvider>();
 
-    app.addHook('onRequest', (request, reply, done) => {
-      const providedToken = extractBearerToken(request.headers.authorization);
-      if (!controlTokensMatch(controlToken, providedToken)) {
-        reply.code(401).send({ error: 'Unauthorized' });
-        return;
+  app.addHook('onRequest', (request, reply, done) => {
+    const providedToken = extractBearerToken(request.headers.authorization);
+    if (!controlTokensMatch(controlToken, providedToken)) {
+      reply.code(401).send({ error: 'Unauthorized' });
+      return;
+    }
+    done();
+  });
+
+  // Session reports itself after creation
+  typed.post('/session-started', {
+    schema: {
+      body: z.object({
+        sessionId: z.string(),
+        metadata: z.object({
+          hostPid: z.number().int().positive().optional(),
+          startedBy: z.enum(['daemon', 'terminal']).optional(),
+        }).passthrough(),
+        encryption: z.object({
+          encryptionKey: z.string(),
+          encryptionVariant: z.enum(['legacy', 'dataKey']),
+          seq: z.number(),
+          metadataVersion: z.number(),
+          agentStateVersion: z.number(),
+        }).optional()
+      }),
+      response: {
+        200: z.object({
+          status: z.literal('ok')
+        })
       }
-      done();
-    });
+    }
+  }, async (request) => {
+    const { sessionId, metadata, encryption } = request.body;
 
-    // Session reports itself after creation
-    typed.post('/session-started', {
-      schema: {
-        body: z.object({
-          sessionId: z.string(),
-          metadata: z.object({
-            hostPid: z.number().int().positive().optional(),
-            startedBy: z.enum(['daemon', 'terminal']).optional(),
-          }).passthrough(),
-          encryption: z.object({
-            encryptionKey: z.string(),
-            encryptionVariant: z.enum(['legacy', 'dataKey']),
-            seq: z.number(),
-            metadataVersion: z.number(),
-            agentStateVersion: z.number(),
-          }).optional()
-        }),
-        response: {
-          200: z.object({
-            status: z.literal('ok')
-          })
-        }
-      }
-    }, async (request) => {
-      const { sessionId, metadata, encryption } = request.body;
+    logger.debug(`[CONTROL SERVER] Session started: ${sessionId}`);
 
-      logger.debug(`[CONTROL SERVER] Session started: ${sessionId}`);
+    let encryptionData: SessionEncryptionData | undefined;
+    if (encryption) {
+      encryptionData = {
+        encryptionKey: decodeBase64(encryption.encryptionKey),
+        encryptionVariant: encryption.encryptionVariant,
+        seq: encryption.seq,
+        metadataVersion: encryption.metadataVersion,
+        agentStateVersion: encryption.agentStateVersion,
+      };
+    }
 
-      let encryptionData: SessionEncryptionData | undefined;
-      if (encryption) {
-        encryptionData = {
-          encryptionKey: decodeBase64(encryption.encryptionKey),
-          encryptionVariant: encryption.encryptionVariant,
-          seq: encryption.seq,
-          metadataVersion: encryption.metadataVersion,
-          agentStateVersion: encryption.agentStateVersion,
-        };
-      }
+    onHappySessionWebhook(sessionId, metadata as Metadata, encryptionData);
 
-      onHappySessionWebhook(sessionId, metadata as Metadata, encryptionData);
+    return { status: 'ok' as const };
+  });
 
-      return { status: 'ok' as const };
-    });
-
-    // List all tracked sessions
-    typed.post('/list', {
-      schema: {
-        response: {
-          200: z.object({
-            children: z.array(z.object({
-              startedBy: z.string(),
-              happySessionId: z.string(),
-              pid: z.number()
-            }))
-          })
-        }
-      }
-    }, async () => {
-      const children = getChildren();
-      logger.debug(`[CONTROL SERVER] Listing ${children.length} sessions`);
-      return { 
-        children: children
-          .filter(child => child.happySessionId !== undefined)
-          .map(child => ({
-            startedBy: child.startedBy,
-            happySessionId: child.happySessionId!,
-            pid: child.pid
+  // List all tracked sessions
+  typed.post('/list', {
+    schema: {
+      response: {
+        200: z.object({
+          children: z.array(z.object({
+            startedBy: z.string(),
+            happySessionId: z.string(),
+            pid: z.number()
           }))
+        })
       }
-    });
+    }
+  }, async () => {
+    const children = getChildren();
+    logger.debug(`[CONTROL SERVER] Listing ${children.length} sessions`);
+    return { 
+      children: children
+        .filter(child => child.happySessionId !== undefined)
+        .map(child => ({
+          startedBy: child.startedBy,
+          happySessionId: child.happySessionId!,
+          pid: child.pid
+        }))
+    }
+  });
 
-    // Stop specific session
-    typed.post('/stop-session', {
-      schema: {
-        body: z.object({
-          sessionId: z.string()
-        }),
-        response: {
-          200: z.object({
-            success: z.boolean(),
-            error: z.string().optional(),
-          })
-        }
+  // Stop specific session
+  typed.post('/stop-session', {
+    schema: {
+      body: z.object({
+        sessionId: z.string()
+      }),
+      response: {
+        200: z.object({
+          success: z.boolean(),
+          error: z.string().optional(),
+        })
       }
-    }, async (request) => {
-      const { sessionId } = request.body;
+    }
+  }, async (request) => {
+    const { sessionId } = request.body;
 
-      logger.debug(`[CONTROL SERVER] Stop session request: ${sessionId}`);
-      return stopSession(sessionId);
-    });
+    logger.debug(`[CONTROL SERVER] Stop session request: ${sessionId}`);
+    return stopSession(sessionId);
+  });
 
-    // Spawn new session
-    typed.post('/spawn-session', {
-      schema: {
-        body: z.object({
-          directory: z.string(),
+  // Spawn new session
+  typed.post('/spawn-session', {
+    schema: {
+      body: z.object({
+        directory: z.string(),
+        sessionId: z.string().optional(),
+        agent: z.enum(['claude', 'codex', 'gemini', 'openclaw', 'agy', 'openhands_local', 'openhands_deepinfra']).optional(),
+        permissionMode: z.string().optional(),
+        modelMode: z.string().optional(),
+        effortLevel: z.string().optional(),
+        environmentVariables: z.record(z.string(), z.string()).optional(),
+      }),
+      response: {
+        200: z.object({
+          success: z.boolean(),
           sessionId: z.string().optional(),
-          agent: z.enum(['claude', 'codex', 'gemini', 'openclaw', 'agy', 'openhands_local', 'openhands_deepinfra']).optional(),
-          permissionMode: z.string().optional(),
-          modelMode: z.string().optional(),
-          effortLevel: z.string().optional(),
-          environmentVariables: z.record(z.string(), z.string()).optional(),
+          approvedNewDirectoryCreation: z.boolean().optional()
         }),
-        response: {
-          200: z.object({
-            success: z.boolean(),
-            sessionId: z.string().optional(),
-            approvedNewDirectoryCreation: z.boolean().optional()
-          }),
-          409: z.object({
-            success: z.boolean(),
-            requiresUserApproval: z.boolean().optional(),
-            actionRequired: z.string().optional(),
-            directory: z.string().optional()
-          }),
-          500: z.object({
-            success: z.boolean(),
-            error: z.string().optional()
-          })
-        }
+        409: z.object({
+          success: z.boolean(),
+          requiresUserApproval: z.boolean().optional(),
+          actionRequired: z.string().optional(),
+          directory: z.string().optional()
+        }),
+        500: z.object({
+          success: z.boolean(),
+          error: z.string().optional()
+        })
       }
-    }, async (request, reply) => {
-      const { directory, sessionId, agent, permissionMode, modelMode, effortLevel, environmentVariables } = request.body;
+    }
+  }, async (request, reply) => {
+    const { directory, sessionId, agent, permissionMode, modelMode, effortLevel, environmentVariables } = request.body;
 
-      logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}, agent=${agent || 'default'}`);
-      const result = await spawnSession({ directory, sessionId, agent, permissionMode, modelMode, effortLevel, environmentVariables });
+    logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}, agent=${agent || 'default'}`);
+    const result = await spawnSession({ directory, sessionId, agent, permissionMode, modelMode, effortLevel, environmentVariables });
 
-      switch (result.type) {
-        case 'success':
-          // Check if sessionId exists, if not return error
-          if (!result.sessionId) {
-            reply.code(500);
-            return {
-              success: false,
-              error: 'Failed to spawn session: no session ID returned'
-            };
-          }
-          return {
-            success: true,
-            sessionId: result.sessionId,
-            approvedNewDirectoryCreation: true
-          };
-        
-        case 'requestToApproveDirectoryCreation':
-          reply.code(409); // Conflict - user input needed
-          return { 
-            success: false,
-            requiresUserApproval: true,
-            actionRequired: 'CREATE_DIRECTORY',
-            directory: result.directory
-          };
-        
-        case 'error':
+    switch (result.type) {
+      case 'success':
+        // Check if sessionId exists, if not return error
+        if (!result.sessionId) {
           reply.code(500);
-          return { 
+          return {
             success: false,
-            error: result.errorMessage
+            error: 'Failed to spawn session: no session ID returned'
           };
-      }
-    });
-
-    // Stop daemon
-    typed.post('/stop', {
-      schema: {
-        response: {
-          200: z.object({
-            status: z.string()
-          })
         }
+        return {
+          success: true,
+          sessionId: result.sessionId,
+          approvedNewDirectoryCreation: true
+        };
+      
+      case 'requestToApproveDirectoryCreation':
+        reply.code(409); // Conflict - user input needed
+        return { 
+          success: false,
+          requiresUserApproval: true,
+          actionRequired: 'CREATE_DIRECTORY',
+          directory: result.directory
+        };
+      
+      case 'error':
+        reply.code(500);
+        return { 
+          success: false,
+          error: result.errorMessage
+        };
+    }
+  });
+
+  // Stop daemon
+  typed.post('/stop', {
+    schema: {
+      response: {
+        200: z.object({
+          status: z.string()
+        })
       }
-    }, async () => {
-      logger.debug('[CONTROL SERVER] Stop daemon request received');
+    }
+  }, async () => {
+    logger.debug('[CONTROL SERVER] Stop daemon request received');
 
-      // Give time for response to arrive
-      setTimeout(() => {
-        logger.debug('[CONTROL SERVER] Triggering daemon shutdown');
-        requestShutdown();
-      }, 50);
+    // Give time for response to arrive
+    setTimeout(() => {
+      logger.debug('[CONTROL SERVER] Triggering daemon shutdown');
+      requestShutdown();
+    }, 50);
 
-      return { status: 'stopping' };
-    });
+    return { status: 'stopping' };
+  });
 
   return app;
 }
