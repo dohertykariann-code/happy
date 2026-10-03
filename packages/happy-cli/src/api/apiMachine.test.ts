@@ -333,4 +333,23 @@ describe('ApiMachineClient socket reconnection', () => {
         client.shutdown();
         expect(mockStopDeepInfraModelProbe).toHaveBeenCalledTimes(1);
     });
+
+    it('retries the DeepInfra model probe on the next reconnect after a failed attempt', async () => {
+        // Punch 3a: a probe that resolves to undefined (timeout, network error,
+        // malformed response) must not permanently wedge the picker at its
+        // single hardcoded fallback row until a manual daemon restart.
+        mockDetectDeepInfraModels.mockResolvedValueOnce(undefined);
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        client.connect();
+
+        emitSocketEvent('connect');
+        expect(mockDetectDeepInfraModels).toHaveBeenCalledTimes(1);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        mockDetectDeepInfraModels.mockResolvedValueOnce([{ id: 'openai/zai-org/GLM-5.2', displayName: 'GLM-5.2' }]);
+        emitSocketEvent('connect');
+        expect(mockDetectDeepInfraModels).toHaveBeenCalledTimes(2);
+        client.shutdown();
+    });
 });

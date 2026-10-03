@@ -24,9 +24,19 @@ function hasModelData(payload: unknown): payload is { data: Array<{ id: string }
 }
 
 /**
- * Fetches the public DeepInfra catalog once per daemon process. The curated
- * fallback rows stay available when upstream has renamed or retired one item,
- * so a partial catalog miss is not treated as a complete probe failure.
+ * Fetches the public DeepInfra catalog once per daemon process, on success.
+ * The curated fallback rows stay available when upstream has renamed or
+ * retired one item, so a partial catalog miss is not treated as a complete
+ * probe failure.
+ *
+ * A failed probe (timeout, network error, malformed response) is NOT cached:
+ * caching `undefined` forever would mean one transient failure (e.g. a 10s
+ * timeout during a loaded boot) wedges the picker at its single hardcoded
+ * fallback row for the rest of the daemon's uptime, since `startDeepInfraModelProbe`
+ * in apiMachine.ts retries on every reconnect rather than only once. Letting
+ * the next reconnect's call hit the network again is cheap and self-heals the
+ * common case (punch 3a: detector proven correct in isolation, but the live
+ * picker stuck at 1 model until a manual daemon restart).
  */
 export function createDeepInfraModelDetector(
   fetchFn: FetchLike = fetch,
@@ -44,7 +54,7 @@ export function createDeepInfraModelDetector(
   const detect = (): Promise<DeepInfraModelInfo[] | undefined> => {
     if (cached) return cached;
 
-    cached = (async () => {
+    const thisAttempt: Promise<DeepInfraModelInfo[] | undefined> = (async () => {
       const abortController = new AbortController();
       activeAbortController = abortController;
       let timeout: NodeJS.Timeout | undefined;
@@ -83,6 +93,17 @@ export function createDeepInfraModelDetector(
         resolveStop = undefined;
       }
     })();
+
+    cached = thisAttempt;
+    void thisAttempt.then((result) => {
+      // Only a failure (undefined) clears the cache; a success stays cached
+      // for the daemon's lifetime as before. The `cached === thisAttempt`
+      // check guards against clearing a newer attempt that already replaced
+      // this one by the time this resolves.
+      if (result === undefined && cached === thisAttempt) {
+        cached = undefined;
+      }
+    });
 
     return cached;
   };
