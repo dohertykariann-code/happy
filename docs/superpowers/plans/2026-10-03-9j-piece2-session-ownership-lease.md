@@ -1088,3 +1088,146 @@ Task 8 match their `.inc()` call sites in Tasks 4, 5 and 7 exactly.
 no `.inc()` caller. Task 11 Step 5 greps that the minted token reaches both
 presentation sites. Task 12 Step 5 checks the real value distribution rather than
 only that the column writes.
+
+---
+
+## Verified import facts (read 2026-10-03, use these verbatim)
+
+Gaps closed after the first draft, each by direct read. Do not infer these.
+
+- **`db` is NOT currently imported in `sources/app/api/socket.ts`.** Confirmed by
+  grep returning no match for an import of `db` in that file. Tasks 5 and 6 must add
+  it. The canonical form across this codebase (5 call sites) is:
+  `import { db } from "@/storage/db";`
+- **`socket.ts` imports metrics relatively, not by alias.** Line 9 reads
+  `import { ... } from "../monitoring/metrics2";`. Add the two new counters to that
+  existing import rather than creating an aliased second one.
+- **`sessionRoutes.ts` uses the `@/` alias** (lines 1, 3, 6, 8), so the Task 4
+  imports should read `@/app/presence/sessionLeaseStore` and
+  `@/app/monitoring/metrics2`.
+- **Counter construction shape confirmed** at `sources/app/monitoring/metrics2.ts:60-78`:
+  `new Counter({ name, help, labelNames?: [...] as const, registers: [register] })`,
+  with `labelNames` omitted for unlabelled counters. The Task 8 blocks match this
+  shape. Note the Piece 1 counter's variable name is `sessionContentionCounter`
+  while its metric name is `session_contention_events_total`; keep that convention
+  (camelCase variable, snake_case metric name).
+- **Vitest picks up new test files automatically.** `vitest.config` line 8 is
+  `include: ['**/*.test.ts', '**/*.spec.ts']`, so files created under
+  `sources/app/presence/` need no config change.
+- **Still unlocated, resolve before writing Task 11:** the CLI's `POST /v1/sessions`
+  call site. It was not found during planning. Locate it with
+  `grep -rn "v1/sessions" ~/code/happy/packages/happy-cli/src --include='*.ts'`
+  before editing, rather than assuming which file holds it.
+
+---
+
+## SAFETY CORRECTION to Task 2: the worker never applies the migration
+
+Found 2026-10-03 while preparing the Codex dispatch.
+`~/code/happy-cos/scripts/launcher/start-mobile-csuite.command:264` contains
+`export PGLITE_DIR="$HOME/.happy-mobile-data"`, an absolute path outside both
+repositories. That is the live database, the same directory punch rows 8b and 1b
+cover with a raw-repair guard and a nightly cold backup.
+
+`sources/standalone.ts:24-25` resolves `DATA_DIR || "./data"` then
+`PGLITE_DIR || <dataDir>/pglite`, so an unset environment is harmless, but an
+inherited or exported `PGLITE_DIR` points at production.
+
+**Task 2 Step 4 (`npx prisma migrate deploy`) is therefore REMOVED from the
+worker's scope.** The worker runs Step 2 with `--create-only` and stops. It must not
+run `prisma migrate deploy`, `prisma migrate dev` without `--create-only`,
+`prisma db push`, or `prisma migrate reset`, and must not set or export
+`PGLITE_DIR` or `DATA_DIR`.
+
+Applying the migration moves into Task 12 (deployment), performed deliberately after
+confirming the most recent nightly backup of `~/.happy-mobile-data` succeeded. The
+migration is additive and all three columns are nullable, so the ordering is safe:
+the new server code tolerates a not-yet-migrated database because every lease read
+is null-checked, and a pre-change CLI presents no token at all.
+
+---
+
+## MEASURED BASELINE on `origin/fork/cos` a15b1194 (run 2026-10-03, before any edit)
+
+Measured in a clean worktree after `pnpm install --frozen-lockfile`, from
+`packages/happy-server`. Read this before trusting any "Expected: exit 0" above.
+
+**`npx tsc --noEmit` does NOT exit 0 on an untouched tree.** Two pre-existing errors:
+
+```
+sources/app/api/routes/pushRoutes.spec.ts(23,74): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ id: string; accountId: string; token: string; }'.
+sources/index.spec.ts(6,36): error TS1343: The 'import.meta' meta-property is only allowed when the '--module' option is 'es2020', 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', or 'nodenext'.
+```
+
+Every "Expected: exit 0" for `tsc` in Tasks 1 through 9 is therefore wrong as
+written. The real pass condition is: **exactly these two errors and no others.** Do
+not fix them, and do not edit `sources/app/api/routes/pushRoutes.spec.ts` or
+`sources/index.spec.ts`; they are outside this change and pre-date it.
+
+**`npx vitest run` IS green on an untouched tree:** 25 files, 139 tests, 0 failures,
+about 2.2s. That is the real baseline. New tests from Tasks 1, 3 and 9 must raise
+both counts with zero failures. The expected end state for Workstream A is 28 files
+and roughly 161 tests (13 from Task 1, 7 from Task 3, 2 from Task 9), and any
+shortfall means a test file was not picked up.
+
+---
+
+## TWO MORE CORRECTIONS, measured 2026-10-03 during the Codex dispatches
+
+### Task 2 cannot use the Prisma migrate CLI at all
+
+`npx prisma migrate dev --name add_session_ownership_lease --create-only` fails:
+
+```text
+Error code: P1012
+error: Environment variable not found: DATABASE_URL.
+  -->  prisma/schema.prisma:15
+```
+
+This deployment has no `DATABASE_URL`. It runs PGlite through
+`pglite-prisma-adapter`, and `sources/standalone.ts` `runMigrations` reads raw
+`prisma/migrations/<name>/migration.sql` files and execs them against PGlite
+itself, tracking them in a `_prisma_migrations` table it creates by hand
+(`standalone.ts:27-60`). The Prisma migrate CLI is not in this deployment's
+migration path.
+
+**Task 2 Step 2 is replaced.** Hand-author the migration directory and SQL, matching
+the shape of the existing `prisma/migrations/20260407053500_add_voice_conversation/migration.sql`:
+
+Create `prisma/migrations/20261003000000_add_session_ownership_lease/migration.sql`
+containing exactly:
+
+```sql
+-- AlterTable
+ALTER TABLE "Session" ADD COLUMN     "ownerToken" TEXT;
+ALTER TABLE "Session" ADD COLUMN     "ownerExpiresAt" TIMESTAMP(3);
+ALTER TABLE "Session" ADD COLUMN     "ownerClient" TEXT;
+```
+
+Then verify, which replaces the old Step 3:
+
+Run: `grep -c "ADD COLUMN" prisma/migrations/20261003000000_add_session_ownership_lease/migration.sql; grep -ci drop prisma/migrations/20261003000000_add_session_ownership_lease/migration.sql`
+Expected: `3` then `0`.
+
+`npx prisma generate` is still required after editing `schema.prisma`, because the
+generated client is what the store module types against, and it does not need a
+database connection. Run that and confirm exit 0.
+
+### Mutation proofs cannot use git, if a worker runs them
+
+Codex cannot write to `.git` under `--sandbox workspace-write` (see
+`bug-patterns/2026-10-03-codex-cannot-commit-inside-a-git-worktree.md`), so
+`git checkout <file>` and `git diff --quiet` are unavailable to it.
+
+When a worker performs Tasks 6 and 7, substitute:
+
+```bash
+cp sources/app/presence/sessionLease.ts /tmp/sessionLease.ts.bak
+# apply the mutation, run the suite, capture the failure
+cp /tmp/sessionLease.ts.bak sources/app/presence/sessionLease.ts
+diff sources/app/presence/sessionLease.ts /tmp/sessionLease.ts.bak && echo "RESTORED CLEAN"
+rm /tmp/sessionLease.ts.bak
+```
+
+When Claude performs them, the git form is fine and is preferred, because it also
+proves nothing else in the tree drifted.
