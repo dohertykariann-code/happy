@@ -28,6 +28,7 @@ class Configuration {
   public readonly isExperimentalEnabled: boolean
   public readonly disableCaffeinate: boolean
   public readonly bootHappyAgent: boolean
+  public readonly claudeExecutablePath: string | undefined
 
   constructor() {
     // Check if we're running as daemon based on process args
@@ -71,6 +72,11 @@ class Configuration {
     this.bootHappyAgent =
       ['true', '1', 'yes'].includes(process.env.HAPPY_BOOT_AGENT?.toLowerCase() || '') ||
       this.isExperimentalEnabled;
+
+    // Escape hatch for the Claude Agent SDK's own "Native CLI binary not
+    // found" error, which tells the user to "set options.pathToClaudeCodeExecutable"
+    // but happy-cli had no way to actually do that (punch 3).
+    this.claudeExecutablePath = process.env.HAPPY_CLAUDE_EXECUTABLE_PATH || undefined
 
     this.currentCliVersion = packageJson.version
 

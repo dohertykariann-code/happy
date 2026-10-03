@@ -14,6 +14,7 @@ import { PermissionResult } from "./sdk/types";
 import type { JsRuntime } from "./runClaude";
 import { fromRateLimitEvent, windowsFromGetUsage, type UnboundRateLimit, type UsageLimitsPatch, type RateLimitEventInfo } from "./utils/usageLimits";
 import type { UsageLimitWindow } from "@/api/types";
+import { configuration } from "@/configuration";
 
 export async function claudeRemote(opts: {
 
@@ -139,6 +140,7 @@ export async function claudeRemote(opts: {
         canCallTool: (toolName: string, input: unknown, options: CanCallToolOptions) => opts.canCallTool(toolName, input, mode, options),
         abort: opts.signal,
         settingsPath: opts.hookSettingsPath,
+        pathToClaudeCodeExecutable: configuration.claudeExecutablePath,
     }
 
     // Track thinking state
