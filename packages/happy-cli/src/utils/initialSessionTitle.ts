@@ -44,6 +44,36 @@ function truncate(text: string): string {
 }
 
 /**
+ * The project label for a working directory: `General` for the user's home
+ * directory, the last path segment otherwise, falling back to a stable label
+ * when there is no usable basename (e.g. `/`).
+ *
+ * Shared by `buildInitialSessionTitle` (session creation) and
+ * `getSessionTitle` (push notifications) so the "which project is this"
+ * question gets the same answer in both places. Deliberately has no branch
+ * segment or truncation of its own: those are session-title-specific and
+ * layered on top by the caller that needs them.
+ *
+ * @param path - The directory to label.
+ * @param homeDir - The user's home directory (e.g. `os.homedir()`), passed in
+ *   rather than read here so this stays a pure, easily-tested function.
+ */
+export function pathProjectLabel(path: string, homeDir?: string): string {
+    const normalizedPath = normalizeForComparison(path ?? '');
+    const isHomeDirectory = !!homeDir && normalizedPath === normalizeForComparison(homeDir);
+    if (isHomeDirectory) {
+        return GENERAL_SESSION_LABEL;
+    }
+
+    // Not using node:path.basename: it is platform-dependent, and this label
+    // is rendered on the phone from a path produced on some other machine.
+    const segments = (path ?? '')
+        .split(/[\\/]+/)
+        .filter((segment) => segment.length > 0);
+    return segments[segments.length - 1] ?? UNNAMED_PROJECT_LABEL;
+}
+
+/**
  * Builds the title a session is created with.
  *
  * @param cwd - The session's working directory.
@@ -52,20 +82,7 @@ function truncate(text: string): string {
  *   rather than read here so this stays a pure, easily-tested function.
  */
 export function buildInitialSessionTitle(cwd: string, gitBranch?: string, homeDir?: string): string {
-    const normalizedCwd = normalizeForComparison(cwd ?? '');
-    const isHomeDirectory = !!homeDir && normalizedCwd === normalizeForComparison(homeDir);
-
-    let project: string;
-    if (isHomeDirectory) {
-        project = GENERAL_SESSION_LABEL;
-    } else {
-        // Not using node:path.basename: it is platform-dependent, and this label
-        // is rendered on the phone from a path produced on some other machine.
-        const segments = (cwd ?? '')
-            .split(/[\\/]+/)
-            .filter((segment) => segment.length > 0);
-        project = segments[segments.length - 1] ?? UNNAMED_PROJECT_LABEL;
-    }
+    const project = pathProjectLabel(cwd, homeDir);
 
     const branch = gitBranch?.trim();
     if (!branch) {
