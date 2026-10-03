@@ -4,7 +4,7 @@ punch_row: 9j
 date: 2026-10-03
 tier: standard
 security_tier: T2
-status: blocked_on_hitl
+status: hitl_resolved_ready_to_plan
 repos_in_scope:
   - ~/code/happy (packages/happy-cli) -- canonical app repo per happy/CLAUDE.md
   - ~/code/happy-cos (packages/happy-server) -- the server that actually runs
@@ -150,7 +150,7 @@ The first three turn this feature into an outage if implemented naively.
    Fallback: the CAS cousin -- conditional `updateManyAndReturn`, loser sees an
    empty result and is refused.
 
-## HITL checkpoint -- BLOCKING, needs Kari before implementation
+## HITL checkpoint -- RESOLVED 2026-10-03
 
 The spec's own open item, never answered: **what does the server do with a
 session-scoped connection presenting no `ownerToken` at all?**
@@ -167,6 +167,22 @@ and the live daemon's processes were observed running from `happy-wt-main`.
   construction nothing refuses it.
 - **Refuse**: strictly correct, closes 9a immediately, breaks every worktree
   until each is individually rebuilt.
+
+**Kari's decision, 2026-10-03: tolerate and log, with a setting to flip strict.**
+Logged to `c-suite/inbox/decisions-log/2026-10-03/9j-piece2.jsonl`.
+
+Implementation consequences of that choice, which the plan must carry:
+
+- A token-less session-scoped handshake is admitted, not refused.
+- Each admission of a token-less connection emits a structured log line. It is a
+  distinct event from Piece 1's contention counter, so the two can be read apart.
+- A server setting gates strict mode. Default is tolerant for this release. The
+  setting name and its default belong in the plan, and the strict path needs its
+  own test even while the default is tolerant, so flipping it later is not the
+  first time that branch executes.
+- A token-less connection cannot claim or renew a lease, because it presents no
+  token to write. It is admitted and logged only. The plan must state what the
+  row's owner columns hold in that case rather than leaving it implied.
 
 ## Deferrals (v1 vs v2)
 
