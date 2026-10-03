@@ -25,6 +25,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Production
 - `pnpm ota` - Deploy over-the-air updates via EAS Update to production branch
 
+### Before calling a build done
+Run `docs/on-device-build-checklist.md` on-device after any new EAS build
+or OTA update, before the build is called done. Automated tests do not
+replace this; it is the check nothing automated reaches.
+
 ## Architecture Overview
 
 ### Core Technology Stack
