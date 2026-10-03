@@ -55,6 +55,15 @@ describe('getSessionNotificationBody', () => {
     it('falls back to a generic label when metadata is missing', () => {
         expect(getSessionNotificationBody(null)).toBe('Session');
     });
+
+    it('labels a home-directory session General instead of the system username', () => {
+        const metadata = makeMetadata({
+            path: '/Users/test',
+            homeDir: '/Users/test',
+        });
+
+        expect(getSessionNotificationBody(metadata)).toBe('General');
+    });
 });
 
 describe('getSessionNotificationCopy', () => {

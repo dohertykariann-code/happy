@@ -121,7 +121,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         // appears, instead of reading `New chat` until the agent calls
         // change_title. An agent change_title call overwrites this.
         summary: {
-            text: buildInitialSessionTitle(cwd, gitBranch),
+            text: buildInitialSessionTitle(cwd, gitBranch, os.homedir()),
             updatedAt: Date.now(),
         },
         sandbox: opts.sandbox?.enabled ? opts.sandbox : null,
