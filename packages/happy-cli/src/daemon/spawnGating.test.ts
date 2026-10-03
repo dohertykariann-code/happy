@@ -13,12 +13,20 @@ const integrationTestText = readFileSync(
   'utf-8',
 );
 
+// The env var name and throwing assertion live in a separate module
+// (src/testing/realAgentSpawnTestGate.ts), not inlined in the integration
+// test file, so the env-var-name check reads that module's text instead.
+const gateModuleText = readFileSync(
+  join(__dirname, '..', 'testing', 'realAgentSpawnTestGate.ts'),
+  'utf-8',
+);
+
 // The gate constant and environment variable names. If someone renames either
 // one, every detection assertion below would silently become meaningless, so
 // we assert their presence up front and fail loudly on any change.
-const GATE_CONSTANT = 'RUN_AGENT_SPAWN_TESTS';
-const GATE_ENV_VAR = 'HAPPY_RUN_AGENT_SPAWN_TESTS';
-const GATE_EXPRESSION = '!RUN_AGENT_SPAWN_TESTS';
+const GATE_CONSTANT = 'RUN_REAL_AGENT_SPAWN_TESTS';
+const GATE_ENV_VAR = 'HAPPY_RUN_REAL_AGENT_SPAWN_TESTS';
+const GATE_EXPRESSION = '!RUN_REAL_AGENT_SPAWN_TESTS';
 
 interface TestBlock {
   name: string;
@@ -92,20 +100,23 @@ describe('spawn gating meta-test', () => {
     // If either name changes, the detection logic in this file would silently
     // stop matching anything. Fail here so the rename is caught immediately.
     expect(integrationTestText).toContain(GATE_CONSTANT);
-    expect(integrationTestText).toContain(GATE_ENV_VAR);
+    expect(gateModuleText).toContain(GATE_ENV_VAR);
+    expect(gateModuleText).toContain(
+      `export const REAL_AGENT_SPAWN_TESTS_ENV = '${GATE_ENV_VAR}';`,
+    );
     expect(integrationTestText).toContain(
-      `const ${GATE_CONSTANT} = process.env.${GATE_ENV_VAR} === '1';`,
+      `const ${GATE_CONSTANT} = shouldRunRealAgentSpawnTests();`,
     );
   });
 
-  it('every test that spawns a real agent is wrapped in it.skipIf(!RUN_AGENT_SPAWN_TESTS)', () => {
+  it('every test that spawns a real agent is wrapped in it.skipIf(!RUN_REAL_AGENT_SPAWN_TESTS)', () => {
     const offending = ungatedSpawningBlocks.map((b) => b.name);
     expect(
       offending,
       'The following tests spawn a real paid agent but are NOT wrapped in ' +
-        'it.skipIf(!RUN_AGENT_SPAWN_TESTS). An unwrapped spawn bills the ' +
+        'it.skipIf(!RUN_REAL_AGENT_SPAWN_TESTS). An unwrapped spawn bills the ' +
         "operator's subscription on every default run. Wrap them with " +
-        'it.skipIf(!RUN_AGENT_SPAWN_TESTS): ' +
+        'it.skipIf(!RUN_REAL_AGENT_SPAWN_TESTS): ' +
         offending.join(', '),
     ).toEqual([]);
   });
@@ -133,7 +144,7 @@ describe('spawn gating meta-test', () => {
       if (block) {
         expect(
           block.gated,
-          `Test "${name}" must be gated with it.skipIf(!RUN_AGENT_SPAWN_TESTS) ` +
+          `Test "${name}" must be gated with it.skipIf(!RUN_REAL_AGENT_SPAWN_TESTS) ` +
             'because it spawns a real agent. Removing the gate would bill the ' +
             "operator's subscription on every default run.",
         ).toBe(true);
