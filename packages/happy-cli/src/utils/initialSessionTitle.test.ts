@@ -50,4 +50,30 @@ describe('buildInitialSessionTitle', () => {
     it('still returns the fallback plus branch at the filesystem root', () => {
         expect(buildInitialSessionTitle('/', 'main')).toBe('Session · main');
     });
+
+    it('labels the home directory as General instead of the system username', () => {
+        expect(buildInitialSessionTitle('/Users/karidoherty', undefined, '/Users/karidoherty'))
+            .toBe('General');
+    });
+
+    it('ignores a trailing slash on either side when matching the home directory', () => {
+        expect(buildInitialSessionTitle('/Users/karidoherty/', undefined, '/Users/karidoherty'))
+            .toBe('General');
+        expect(buildInitialSessionTitle('/Users/karidoherty', undefined, '/Users/karidoherty/'))
+            .toBe('General');
+    });
+
+    it('does not mistake a project directory for the home directory', () => {
+        expect(buildInitialSessionTitle('/Users/karidoherty/code/happy', undefined, '/Users/karidoherty'))
+            .toBe('happy');
+    });
+
+    it('appends the branch when the home directory is itself a git checkout', () => {
+        expect(buildInitialSessionTitle('/Users/karidoherty', 'main', '/Users/karidoherty'))
+            .toBe('General · main');
+    });
+
+    it('treats the home directory normally when homeDir is not provided', () => {
+        expect(buildInitialSessionTitle('/Users/karidoherty')).toBe('karidoherty');
+    });
 });

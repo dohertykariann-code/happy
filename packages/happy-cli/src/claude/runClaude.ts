@@ -152,7 +152,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         // appears, instead of reading `New chat` until the agent calls
         // change_title. An agent change_title call overwrites this.
         summary: {
-            text: buildInitialSessionTitle(workingDirectory, getGitBranch(workingDirectory)),
+            text: buildInitialSessionTitle(workingDirectory, getGitBranch(workingDirectory), os.homedir()),
             updatedAt: Date.now(),
         },
         sandbox: sandboxConfig?.enabled ? sandboxConfig : null,
