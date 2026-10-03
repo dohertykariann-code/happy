@@ -26,6 +26,7 @@ export function getEnvironmentInfo(): Record<string, any> {
         HAPPY_VARIANT: process.env.HAPPY_VARIANT,
         HAPPY_SERVER_URL: process.env.HAPPY_SERVER_URL,
         HAPPY_PROJECT_ROOT: process.env.HAPPY_PROJECT_ROOT,
+        HAPPY_CLAUDE_EXECUTABLE_PATH: process.env.HAPPY_CLAUDE_EXECUTABLE_PATH,
         DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING,
         NODE_ENV: process.env.NODE_ENV,
         DEBUG: process.env.DEBUG,
