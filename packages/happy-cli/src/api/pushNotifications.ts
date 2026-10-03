@@ -3,6 +3,7 @@ import { logger } from '@/ui/logger'
 import { Expo, ExpoPushMessage } from 'expo-server-sdk'
 import type { Metadata } from './types'
 import { configuration } from '@/configuration'
+import { pathProjectLabel } from '@/utils/initialSessionTitle'
 
 export interface PushToken {
     id: string
@@ -24,8 +25,7 @@ function getSessionTitle(metadata: Metadata | null | undefined): string {
         return 'Session'
     }
 
-    const segments = path.split(/[\\/]/).filter(Boolean)
-    return segments[segments.length - 1] || 'Session'
+    return pathProjectLabel(path, metadata?.homeDir)
 }
 
 function getSessionNotificationUrl(data: Record<string, any> | undefined): `/session/${string}` | null {
