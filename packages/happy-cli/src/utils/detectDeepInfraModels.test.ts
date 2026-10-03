@@ -67,6 +67,28 @@ describe('DeepInfra model detection', () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
+  it('does not cache a failed probe, so a later call retries', async () => {
+    // Punch 3a: the detector is correct in isolation (proven by the tests
+    // above), but a one-off transient failure in production left the picker
+    // stuck at its single hardcoded fallback row until a manual daemon
+    // restart. Caching only successes, not failures, is the fix.
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce({ ok: false, json: vi.fn() })
+      .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue(catalog) });
+    const detector = createDeepInfraModelDetector(fetchFn, 100);
+
+    await expect(detector.detect()).resolves.toBeUndefined();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await expect(detector.detect()).resolves.toHaveLength(3);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+
+    // A success, once cached, still behaves like the "daemon lifetime" test
+    // above: a further call does not hit the network again.
+    await expect(detector.detect()).resolves.toHaveLength(3);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
   it('aborts an in-flight probe when stopped during daemon shutdown', async () => {
     let signal: AbortSignal | undefined;
     const stalledFetch = vi.fn((_url: string, options?: RequestInit): Promise<Pick<Response, 'ok' | 'json'>> => {

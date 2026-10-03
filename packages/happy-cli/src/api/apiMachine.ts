@@ -616,13 +616,23 @@ export class ApiMachineClient {
 
         // This is a public HTTP catalog request; keep it off connection and
         // session-creation paths just like the installed-CLI probes above.
+        // Unlike the other two probes, a failure here resets the started flag
+        // (detectDeepInfraModels mirrors this by not caching a failed attempt),
+        // so the next reconnect retries instead of leaving the picker stuck at
+        // its single hardcoded fallback row until a manual daemon restart
+        // (punch 3a: the detector itself is correct; a one-off transient
+        // failure was the thing with no way back).
         void detectDeepInfraModels().then((deepInfraModels) => {
-            if (!deepInfraModels) return;
+            if (!deepInfraModels) {
+                this.deepInfraModelProbeStarted = false;
+                return;
+            }
             return this.updateMachineMetadata((metadata) => ({
                 ...(metadata || {} as any),
                 deepInfraModels,
             }));
         }).catch((error) => {
+            this.deepInfraModelProbeStarted = false;
             logger.debug('[API MACHINE] Failed to publish DeepInfra model capabilities:', error);
         });
     }
