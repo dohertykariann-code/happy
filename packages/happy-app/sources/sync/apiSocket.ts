@@ -4,6 +4,7 @@ import Constants from 'expo-constants';
 import { TokenStorage } from '@/auth/tokenStorage';
 import { Encryption } from './encryption/encryption';
 import { storage } from './storage';
+import { isRpcHandlerErrorPayload } from './rpcHandlerErrorPayload';
 
 export function getHappyClientId(): string {
     let platform: string = Platform.OS; // 'ios' | 'android' | 'web'
@@ -48,14 +49,6 @@ export interface SyncSocketState {
 }
 
 export type SyncSocketListener = (state: SyncSocketState) => void;
-
-/** Identifies the encrypted error envelope returned by RPC handler failures. */
-export function isRpcHandlerErrorPayload(payload: unknown): payload is { error: string } {
-    return typeof payload === 'object'
-        && payload !== null
-        && 'error' in payload
-        && typeof payload.error === 'string';
-}
 
 function unwrapRpcHandlerResponse<R>(payload: unknown): R {
     if (isRpcHandlerErrorPayload(payload)) {
