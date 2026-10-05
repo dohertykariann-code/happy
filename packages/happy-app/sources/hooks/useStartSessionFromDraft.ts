@@ -201,7 +201,7 @@ export function useStartSessionFromDraft() {
         const model = resolveOption<{ key: string }>(
             rigCreation?.models ?? includeConfiguredModel(
                 agentType,
-                getHardcodedModelModes(agentType, t),
+                getHardcodedModelModes(agentType, t, machine.metadata?.deepInfraModels),
                 defaults.modelMode,
             ),
             agentChanged

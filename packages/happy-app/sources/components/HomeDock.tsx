@@ -908,10 +908,10 @@ export const HomeDock = React.memo(({
     const modelOptions = React.useMemo(
         () => rigCreation?.models ?? includeConfiguredModel(
             agentType,
-            getHardcodedModelModes(agentType, t),
+            getHardcodedModelModes(agentType, t, selectedChoice?.happyMachine?.metadata?.deepInfraModels),
             defaults.modelMode,
         ),
-        [agentType, defaults.modelMode, rigCreation],
+        [agentType, defaults.modelMode, rigCreation, selectedChoice?.happyMachine?.metadata?.deepInfraModels],
     );
     // The code default last: when the saved and configured modes were both
     // filtered out for an old CLI, land there rather than on whichever mode
