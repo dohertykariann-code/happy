@@ -34,7 +34,7 @@ export function hashCodexEnhancedMode(mode: CodexEnhancedMode): string {
 export const HAPPY_SYSTEM_BLOCK_OPEN = '<happy-system>';
 export const HAPPY_SYSTEM_BLOCK_CLOSE = '</happy-system>';
 
-function wrapHappySystem(text: string): string {
+export function wrapHappySystem(text: string): string {
     return `${HAPPY_SYSTEM_BLOCK_OPEN}\n${text}\n${HAPPY_SYSTEM_BLOCK_CLOSE}`;
 }
 
