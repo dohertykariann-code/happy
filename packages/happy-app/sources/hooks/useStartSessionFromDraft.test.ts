@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
     alert: vi.fn(),
     confirm: vi.fn(),
     delay: vi.fn(),
+    getHardcodedModelModes: vi.fn(() => [
+        { key: 'default', name: 'Default' },
+        { key: 'opus', name: 'Opus' },
+    ]),
     uuidCount: 0,
 }));
 
@@ -109,10 +113,7 @@ vi.mock('@/components/modelModeOptions', () => ({
         { key: 'yolo', name: 'YOLO' },
         { key: 'bypassPermissions', name: 'YOLO' },
     ],
-    getHardcodedModelModes: () => [
-        { key: 'default', name: 'Default' },
-        { key: 'opus', name: 'Opus' },
-    ],
+    getHardcodedModelModes: mocks.getHardcodedModelModes,
     getEffortLevelsForModel: () => [
         { key: 'medium', name: 'Medium' },
     ],
@@ -328,6 +329,41 @@ describe('useStartSessionFromDraft', () => {
             modelMode: 'my-workspace-model',
             effortLevel: 'medium',
         });
+    });
+
+    it('passes live DeepInfra models to the model picker when starting a session', async () => {
+        const deepInfraModels = [
+            { id: 'openai/deepseek-ai/DeepSeek-V4-Flash', displayName: 'DeepSeek V4 Flash' },
+            { id: 'openai/zai-org/GLM-5.2', displayName: 'GLM-5.2' },
+        ];
+        mocks.machines = [{
+            id: 'machine-1',
+            online: true,
+            metadata: {
+                homeDir: '/Users/dev',
+                deepInfraModels,
+                cliAvailability: {
+                    rig: false,
+                    claude: false,
+                    codex: false,
+                    gemini: false,
+                    openclaw: false,
+                    openhands: true,
+                    detectedAt: 1,
+                },
+            },
+        }];
+        mocks.draft = createDraft({ agentType: 'openhands_deepinfra' });
+
+        const { startSession } = useStartSessionFromDraft();
+
+        await expect(startSession()).resolves.toBe(true);
+
+        expect(mocks.getHardcodedModelModes).toHaveBeenCalledWith(
+            'openhands_deepinfra',
+            expect.any(Function),
+            deepInfraModels,
+        );
     });
 
     it('does not spawn a stale Claude draft when the machine only has Codex', async () => {
