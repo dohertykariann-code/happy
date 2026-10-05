@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createId, isCuid } from '@paralleldrive/cuid2';
 import { RawJSONLinesSchema } from '../types';
+import { wrapHappySystem } from '@/codex/codexPrompt';
+import { CHANGE_TITLE_INSTRUCTION } from '@/gemini/constants';
 import {
     closeClaudeTurnWithStatus,
     mapClaudeLogMessageToSessionEnvelopes,
@@ -53,6 +55,26 @@ describe('mapClaudeLogMessageToSessionEnvelopes', () => {
         expect(result.envelopes[0].role).toBe('user');
         expect(result.envelopes[0].turn).toBeUndefined();
         expect(result.envelopes[0].ev).toEqual({ t: 'text', text: 'look at this image' });
+    });
+
+    it('does not expose injected Happy system blocks as user messages', () => {
+        const result = mapClaudeLogMessageToSessionEnvelopes({
+            type: 'user',
+            uuid: 'u-title-instruction',
+            isSidechain: false,
+            message: {
+                role: 'user',
+                content: [
+                    { type: 'text', text: 'rename this session' },
+                    { type: 'text', text: wrapHappySystem(CHANGE_TITLE_INSTRUCTION) },
+                ],
+            },
+            timestamp: '2025-01-01T00:00:00.000Z',
+        } as any, { currentTurnId: null });
+
+        expect(result.envelopes).toHaveLength(1);
+        expect(result.envelopes[0].role).toBe('user');
+        expect(result.envelopes[0].ev).toEqual({ t: 'text', text: 'rename this session' });
     });
 
     it('starts a turn and maps assistant text blocks', () => {

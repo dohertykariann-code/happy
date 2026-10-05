@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { claudeRemote } from './claudeRemote';
 import { query } from '@/claude/sdk';
 import type { EnhancedMode } from './loop';
+import { CHANGE_TITLE_INSTRUCTION } from '@/gemini/constants';
 
 vi.mock('@/claude/sdk', () => ({
     query: vi.fn(),
@@ -104,5 +105,47 @@ describe('claudeRemote', () => {
             type: 'assistant',
             isCompactSummary: true,
         }));
+    });
+
+    it('injects the title instruction only into the first Claude turn', async () => {
+        const sentContents: unknown[] = [];
+        vi.mocked(query).mockImplementation(({ prompt }: any) => ({
+            setPermissionMode: vi.fn(),
+            async *[Symbol.asyncIterator]() {
+                const iterator = prompt[Symbol.asyncIterator]();
+                sentContents.push((await iterator.next()).value.message.content);
+                yield { type: 'result', subtype: 'success' };
+                sentContents.push((await iterator.next()).value.message.content);
+                yield { type: 'result', subtype: 'success' };
+            },
+        } as any));
+
+        let nextMessageCount = 0;
+        await claudeRemote({
+            sessionId: null,
+            path: process.cwd(),
+            allowedTools: [],
+            hookSettingsPath: '/tmp/happy-test-settings.json',
+            nextMessage: async () => {
+                nextMessageCount += 1;
+                if (nextMessageCount === 1) return { message: 'first request', mode };
+                if (nextMessageCount === 2) return { message: 'follow-up request', mode };
+                return null;
+            },
+            onReady: vi.fn(),
+            canCallTool: async () => ({ behavior: 'allow' }) as any,
+            isAborted: () => false,
+            onSessionFound: vi.fn(),
+            onThinkingChange: vi.fn(),
+            onMessage: vi.fn(),
+        });
+
+        expect(sentContents).toEqual([
+            expect.arrayContaining([
+                expect.objectContaining({ type: 'text', text: 'first request' }),
+                expect.objectContaining({ type: 'text', text: expect.stringContaining(CHANGE_TITLE_INSTRUCTION) }),
+            ]),
+            'follow-up request',
+        ]);
     });
 });

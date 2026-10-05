@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
 import type { RawJSONLines } from '@/claude/types';
+import { stripHappySystemBlocks } from '@/codex/codexPrompt';
 import {
     createEnvelope,
     type SessionEnvelope,
@@ -655,7 +656,10 @@ function mapClaudeLogMessageToSessionEnvelopesInternal(
             closeTurn(state, 'completed', envelopes);
             for (const block of blocks) {
                 if (block.type === 'text' && typeof block.text === 'string' && block.text.trim().length > 0) {
-                    envelopes.push(createEnvelope('user', { t: 'text', text: block.text }, { claudeUuid }));
+                    const visibleText = stripHappySystemBlocks(block.text);
+                    if (visibleText.length > 0) {
+                        envelopes.push(createEnvelope('user', { t: 'text', text: visibleText }, { claudeUuid }));
+                    }
                 }
             }
 
