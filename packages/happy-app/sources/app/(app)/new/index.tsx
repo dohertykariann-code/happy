@@ -1046,10 +1046,10 @@ function NewSessionScreen() {
     const modelModes = React.useMemo<ModelMode[]>(
         () => rigCreation?.models ?? includeConfiguredModel(
             selectedAgent,
-            getHardcodedModelModes(selectedAgent, t),
+            getHardcodedModelModes(selectedAgent, t, selectedChoice?.happyMachine?.metadata?.deepInfraModels),
             effectiveAgentDefaults.modelMode,
         ),
-        [selectedAgent, effectiveAgentDefaults.modelMode, rigCreation],
+        [selectedAgent, effectiveAgentDefaults.modelMode, rigCreation, selectedChoice?.happyMachine?.metadata?.deepInfraModels],
     );
 
     const currentModel = resolveSelectedOption(modelModes, modelIndex);
