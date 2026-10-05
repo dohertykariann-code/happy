@@ -10,10 +10,25 @@ import { PushableAsyncIterable } from "@/utils/PushableAsyncIterable";
 import { getProjectPath } from "./utils/path";
 import { awaitFileExist } from "@/modules/watcher/awaitFileExist";
 import { systemPrompt } from "./utils/systemPrompt";
+import { CHANGE_TITLE_INSTRUCTION } from "@/gemini/constants";
+import { wrapHappySystem } from "@/codex/codexPrompt";
 import { PermissionResult } from "./sdk/types";
 import type { JsRuntime } from "./runClaude";
 import { fromRateLimitEvent, windowsFromGetUsage, type UnboundRateLimit, type UsageLimitsPatch, type RateLimitEventInfo } from "./utils/usageLimits";
 import type { UsageLimitWindow } from "@/api/types";
+
+function withTitleInstruction(content: MessageParam['content']): MessageParam['content'] {
+    const titleInstruction = {
+        type: 'text' as const,
+        text: wrapHappySystem(CHANGE_TITLE_INSTRUCTION),
+    };
+
+    if (typeof content === 'string') {
+        return [{ type: 'text', text: content }, titleInstruction];
+    }
+
+    return [...content, titleInstruction];
+}
 
 export async function claudeRemote(opts: {
 
@@ -153,14 +168,22 @@ export async function claudeRemote(opts: {
         }
     };
 
-    // Push initial message
+    // The first turn carries the change-title instruction as prompt content,
+    // where it is more salient than the static system prompt. The sentinel is
+    // stripped by the Claude transcript mapper before it reaches the app.
     let messages = new PushableAsyncIterable<SDKUserMessage>();
+    let first = true;
+    const contentForTurn = (content: MessageParam['content']): MessageParam['content'] => {
+        const includeTitleInstruction = first;
+        first = false;
+        return includeTitleInstruction ? withTitleInstruction(content) : content;
+    };
     messages.push({
         type: 'user',
         parent_tool_use_id: null,
         message: {
             role: 'user',
-            content: initial.message,
+            content: contentForTurn(initial.message),
         },
     });
 
@@ -351,7 +374,7 @@ export async function claudeRemote(opts: {
                         messages.end();
                     } else {
                         mode = next.mode;
-                        messages.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: next.message } });
+                        messages.push({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: contentForTurn(next.message) } });
                     }
                 }).catch(() => {
                     messages.end();
