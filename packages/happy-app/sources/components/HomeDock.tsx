@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Keyboard, LayoutChangeEvent, Modal as RNModal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Keyboard, LayoutChangeEvent, Modal as RNModal, Platform, Pressable, ScrollView, Text, TextInput, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -286,6 +286,10 @@ const styles = StyleSheet.create((theme) => ({
         paddingBottom: MOBILE_COMPOSER_METRICS.inputPaddingBottom,
     },
     focusedComposerActions: MOBILE_ACTION_ROW_GEOMETRY,
+    menuControlFill: {
+        flex: 1,
+        minWidth: 0,
+    },
     nativeModeMenu: MOBILE_MODEL_MENU_GEOMETRY.frame,
     focusedModeButton: MOBILE_MODEL_MENU_GEOMETRY.content,
     nativeEffortMenu: MOBILE_EFFORT_MENU_GEOMETRY.frame,
@@ -562,17 +566,19 @@ function RefusableControl({
     refusing,
     onRefuse,
     children,
+    style,
 }: {
     refusing: boolean;
     onRefuse: () => void;
     children: React.ReactNode;
+    style?: StyleProp<ViewStyle>;
 }) {
     const shake = useSharedValue(0);
     const shakeStyle = useAnimatedStyle(() => ({
         transform: [{ translateX: shake.value }],
     }));
     return (
-        <Animated.View style={shakeStyle}>
+        <Animated.View style={[style, shakeStyle]}>
             {children}
             {refusing && (
                 <Pressable
@@ -1461,11 +1467,11 @@ export const HomeDock = React.memo(({
         triggerAlignment?: NativeSettingsMenuProps['triggerAlignment'];
         children: React.ReactNode;
     }) => (
-        <RefusableControl refusing={isSubmitting} onRefuse={refuse}>
+        <RefusableControl refusing={isSubmitting} onRefuse={refuse} style={style}>
             {!useNativeMenus ? (
                 <Pressable
                     onPress={() => setSheetPage(page)}
-                    style={style}
+                    style={styles.menuControlFill}
                     accessibilityRole="button"
                     accessibilityLabel={accessibilityLabel}
                 >
@@ -1483,7 +1489,7 @@ export const HomeDock = React.memo(({
                     }))}
                     onMenuOpen={markNativeMenuOpen}
                     flat={flat}
-                    style={style}
+                    style={styles.menuControlFill}
                     triggerSystemImage={triggerSystemImage}
                     triggerLabel={triggerLabel}
                     triggerAlignment={triggerAlignment}

@@ -4,6 +4,7 @@ import Constants from 'expo-constants';
 import { TokenStorage } from '@/auth/tokenStorage';
 import { Encryption } from './encryption/encryption';
 import { storage } from './storage';
+import { isRpcHandlerErrorPayload } from './rpcHandlerErrorPayload';
 
 export function getHappyClientId(): string {
     let platform: string = Platform.OS; // 'ios' | 'android' | 'web'
@@ -48,6 +49,13 @@ export interface SyncSocketState {
 }
 
 export type SyncSocketListener = (state: SyncSocketState) => void;
+
+function unwrapRpcHandlerResponse<R>(payload: unknown): R {
+    if (isRpcHandlerErrorPayload(payload)) {
+        throw new Error(payload.error);
+    }
+    return payload as R;
+}
 
 // Comfortably past the server's worst honest case: a 15s wait for a
 // reconnecting daemon to rejoin the room, then a 30s call.
@@ -189,7 +197,7 @@ class ApiSocket {
         );
 
         if (result.ok) {
-            return await sessionEncryption.decryptRaw(result.result) as R;
+            return unwrapRpcHandlerResponse<R>(await sessionEncryption.decryptRaw(result.result));
         }
         throw new Error(result.error || 'RPC call failed');
     }
@@ -209,7 +217,7 @@ class ApiSocket {
         );
 
         if (result.ok) {
-            return await machineEncryption.decryptRaw(result.result) as R;
+            return unwrapRpcHandlerResponse<R>(await machineEncryption.decryptRaw(result.result));
         }
         throw new Error(result.error || 'RPC call failed');
     }
