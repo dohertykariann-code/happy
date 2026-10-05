@@ -49,6 +49,21 @@ export interface SyncSocketState {
 
 export type SyncSocketListener = (state: SyncSocketState) => void;
 
+/** Identifies the encrypted error envelope returned by RPC handler failures. */
+export function isRpcHandlerErrorPayload(payload: unknown): payload is { error: string } {
+    return typeof payload === 'object'
+        && payload !== null
+        && 'error' in payload
+        && typeof payload.error === 'string';
+}
+
+function unwrapRpcHandlerResponse<R>(payload: unknown): R {
+    if (isRpcHandlerErrorPayload(payload)) {
+        throw new Error(payload.error);
+    }
+    return payload as R;
+}
+
 // Comfortably past the server's worst honest case: a 15s wait for a
 // reconnecting daemon to rejoin the room, then a 30s call.
 const RPC_ACK_TIMEOUT_MS = 50_000;
@@ -189,7 +204,7 @@ class ApiSocket {
         );
 
         if (result.ok) {
-            return await sessionEncryption.decryptRaw(result.result) as R;
+            return unwrapRpcHandlerResponse<R>(await sessionEncryption.decryptRaw(result.result));
         }
         throw new Error(result.error || 'RPC call failed');
     }
@@ -209,7 +224,7 @@ class ApiSocket {
         );
 
         if (result.ok) {
-            return await machineEncryption.decryptRaw(result.result) as R;
+            return unwrapRpcHandlerResponse<R>(await machineEncryption.decryptRaw(result.result));
         }
         throw new Error(result.error || 'RPC call failed');
     }
