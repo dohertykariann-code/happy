@@ -168,16 +168,11 @@ export async function claudeRemote(opts: {
         }
     };
 
-    // The first turn carries the change-title instruction as prompt content,
-    // where it is more salient than the static system prompt. The sentinel is
+    // Every turn carries the change-title instruction as prompt content, where
+    // it is more salient than the static system prompt. The sentinel is
     // stripped by the Claude transcript mapper before it reaches the app.
     let messages = new PushableAsyncIterable<SDKUserMessage>();
-    let first = true;
-    const contentForTurn = (content: MessageParam['content']): MessageParam['content'] => {
-        const includeTitleInstruction = first;
-        first = false;
-        return includeTitleInstruction ? withTitleInstruction(content) : content;
-    };
+    const contentForTurn = (content: MessageParam['content']): MessageParam['content'] => withTitleInstruction(content);
     messages.push({
         type: 'user',
         parent_tool_use_id: null,
