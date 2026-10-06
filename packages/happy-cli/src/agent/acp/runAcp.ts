@@ -18,6 +18,8 @@ import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import { encodeBase64 } from '@/api/encryption';
 import { registerKillSessionHandler } from '@/claude/registerKillSessionHandler';
 import { startHappyServer } from '@/claude/utils/startHappyServer';
+import { wrapHappySystem } from '@/codex/codexPrompt';
+import { CHANGE_TITLE_INSTRUCTION } from '@/gemini/constants';
 import { projectPath } from '@/projectPath';
 import { BasePermissionHandler, type PermissionResult } from '@/utils/BasePermissionHandler';
 import { connectionState } from '@/utils/serverConnectionErrors';
@@ -558,6 +560,13 @@ export async function runAcp(opts: {
     mcpServers,
     permissionHandler,
     transportHandler: new DefaultTransport(opts.agentName),
+    hasChangeTitleInstruction: (prompt: string) => {
+      const lower = prompt.toLowerCase();
+      return lower.includes('change_title') ||
+        lower.includes('change title') ||
+        lower.includes('set title') ||
+        lower.includes('mcp__happy__change_title');
+    },
     verbose,
   });
 
@@ -946,7 +955,8 @@ export async function runAcp(opts: {
         if (typeof batch.mode.model === 'string' && batch.mode.model.length > 0) {
           await switchModelIfRequested(batch.mode.model);
         }
-        await backend.sendPrompt(acpSessionId, batch.message);
+        const prompt = `${batch.message}\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}`;
+        await backend.sendPrompt(acpSessionId, prompt);
         await turnEnded;
         sendEnvelopes(sessionManager.endTurn('completed'));
         session.sendSessionEvent({ type: 'ready' });

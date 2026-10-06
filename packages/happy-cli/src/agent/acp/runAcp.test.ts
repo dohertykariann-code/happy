@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { wrapHappySystem } from '@/codex/codexPrompt';
+import { CHANGE_TITLE_INSTRUCTION } from '@/gemini/constants';
 
 const mocks = vi.hoisted(() => {
   const sessionHandlers = new Map<string, (params: any) => Promise<any> | any>();
@@ -254,7 +256,7 @@ describe('runAcp', () => {
     expect(mocks.backendState.constructorArgs.args).toEqual(['--acp']);
     expect(mocks.backendState.prompts[0]).toEqual({
       sessionId: 'acp-session-1',
-      prompt: 'Build a test plan',
+      prompt: `Build a test plan\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}`,
     });
 
     const envelopeTypes = mocks.mockSession.sendSessionProtocolMessage.mock.calls.map(([envelope]) => envelope.ev.t);
@@ -270,6 +272,60 @@ describe('runAcp', () => {
       'Tool: ReadFile completed (callId=tool-1)',
       'Status: idle',
     ]));
+  });
+
+  it('appends the wrapped title instruction to every ACP turn', async () => {
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'opencode',
+      command: 'opencode',
+      args: ['--acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+
+    for (const text of ['First task', 'Second task']) {
+      mocks.getUserMessageHandler()!({
+        role: 'user',
+        content: { type: 'text', text },
+      });
+      await vi.waitFor(() => {
+        expect(mocks.backendState.prompts).toHaveLength(text === 'First task' ? 1 : 2);
+      });
+    }
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+
+    expect(mocks.backendState.prompts).toEqual([
+      { sessionId: 'acp-session-1', prompt: `First task\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}` },
+      { sessionId: 'acp-session-1', prompt: `Second task\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}` },
+    ]);
+  });
+
+  it('configures ACP title-instruction detection for permission disambiguation', async () => {
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'opencode',
+      command: 'opencode',
+      args: ['--acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.constructorArgs).not.toBeNull();
+    });
+
+    const hasChangeTitleInstruction = mocks.backendState.constructorArgs.hasChangeTitleInstruction;
+    expect(hasChangeTitleInstruction).toBeTypeOf('function');
+    expect(hasChangeTitleInstruction(CHANGE_TITLE_INSTRUCTION)).toBe(true);
+    expect(hasChangeTitleInstruction('Please set title now')).toBe(true);
+    expect(hasChangeTitleInstruction('Call MCP__HAPPY__CHANGE_TITLE')).toBe(true);
+    expect(hasChangeTitleInstruction('Read the project instructions')).toBe(false);
+
+    await mocks.getKillHandler()!();
+    await runPromise;
   });
 
   it('registers abort handler that cancels the ACP backend session', async () => {
