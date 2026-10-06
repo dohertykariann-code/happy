@@ -3,6 +3,7 @@ import { claudeRemote } from './claudeRemote';
 import { query } from '@/claude/sdk';
 import type { EnhancedMode } from './loop';
 import { CHANGE_TITLE_INSTRUCTION } from '@/gemini/constants';
+import { wrapHappySystem } from '@/codex/codexPrompt';
 
 vi.mock('@/claude/sdk', () => ({
     query: vi.fn(),
@@ -107,7 +108,7 @@ describe('claudeRemote', () => {
         }));
     });
 
-    it('injects the title instruction only into the first Claude turn', async () => {
+    it('injects the wrapped title instruction into every Claude turn', async () => {
         const sentContents: unknown[] = [];
         vi.mocked(query).mockImplementation(({ prompt }: any) => ({
             setPermissionMode: vi.fn(),
@@ -143,9 +144,12 @@ describe('claudeRemote', () => {
         expect(sentContents).toEqual([
             expect.arrayContaining([
                 expect.objectContaining({ type: 'text', text: 'first request' }),
-                expect.objectContaining({ type: 'text', text: expect.stringContaining(CHANGE_TITLE_INSTRUCTION) }),
+                expect.objectContaining({ type: 'text', text: wrapHappySystem(CHANGE_TITLE_INSTRUCTION) }),
             ]),
-            'follow-up request',
+            expect.arrayContaining([
+                expect.objectContaining({ type: 'text', text: 'follow-up request' }),
+                expect.objectContaining({ type: 'text', text: wrapHappySystem(CHANGE_TITLE_INSTRUCTION) }),
+            ]),
         ]);
     });
 });
