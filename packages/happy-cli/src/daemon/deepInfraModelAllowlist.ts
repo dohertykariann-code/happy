@@ -5,6 +5,11 @@ export const DEEPINFRA_MODEL_CATALOG = [
     displayName: 'DeepSeek V4 Flash',
   },
   {
+    catalogId: 'deepseek-ai/DeepSeek-V4.1-Flash',
+    id: 'openai/deepseek-ai/DeepSeek-V4.1-Flash',
+    displayName: 'DeepSeek V4.1 Flash (vision)',
+  },
+  {
     catalogId: 'zai-org/GLM-5.2',
     id: 'openai/zai-org/GLM-5.2',
     displayName: 'GLM-5.2',
