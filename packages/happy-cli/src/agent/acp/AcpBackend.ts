@@ -33,6 +33,7 @@ import type {
 } from '../core';
 import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
+import type { PendingAttachment } from '@/utils/MessageQueue2';
 import packageJson from '../../../package.json';
 
 /**
@@ -48,6 +49,51 @@ const RETRY_CONFIG = {
 } as const;
 const ACP_MUTED_COLOR = '\u001b[90m';
 const ACP_COLOR_RESET = '\u001b[0m';
+
+type AcpImageMimeType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
+function detectAcpImageMime(bytes: Uint8Array): AcpImageMimeType | null {
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+    return 'image/gif';
+  }
+  if (
+    bytes.length >= 12
+    && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
+
+export function buildAcpPromptContent(prompt: string, attachments?: PendingAttachment[]): ContentBlock[] {
+  const contentBlocks: ContentBlock[] = [];
+
+  for (const attachment of attachments ?? []) {
+    const mimeType = detectAcpImageMime(attachment.data);
+    if (!mimeType) {
+      logger.debug('[AcpBackend] Skipping unsupported image attachment', {
+        mimeType: attachment.mimeType,
+        size: attachment.data.length,
+      });
+      continue;
+    }
+    contentBlocks.push({
+      type: 'image',
+      data: Buffer.from(attachment.data).toString('base64'),
+      mimeType,
+    });
+  }
+
+  contentBlocks.push({ type: 'text', text: prompt });
+  return contentBlocks;
+}
 
 function formatAcpTime(date: Date = new Date()): string {
   const hours = String(date.getHours()).padStart(2, '0');
@@ -1037,7 +1083,7 @@ export class AcpBackend implements AgentBackend {
   private idleResolver: (() => void) | null = null;
   private waitingForResponse = false;
 
-  async sendPrompt(sessionId: SessionId, prompt: string): Promise<void> {
+  async sendPrompt(sessionId: SessionId, prompt: string, attachments?: PendingAttachment[]): Promise<void> {
     // Check if prompt contains change_title instruction (via optional callback)
     const promptHasChangeTitle = this.options.hasChangeTitleInstruction?.(prompt) ?? false;
 
@@ -1063,14 +1109,9 @@ export class AcpBackend implements AgentBackend {
       logger.debug(`[AcpBackend] Sending prompt (length: ${prompt.length}): ${prompt.substring(0, 100)}...`);
       logger.debug(`[AcpBackend] Full prompt: ${prompt}`);
       
-      const contentBlock: ContentBlock = {
-        type: 'text',
-        text: prompt,
-      };
-
       const promptRequest: PromptRequest = {
         sessionId: this.acpSessionId,
-        prompt: [contentBlock],
+        prompt: buildAcpPromptContent(prompt, attachments),
       };
 
       logger.debug(`[AcpBackend] Prompt request:`, JSON.stringify(promptRequest, null, 2));

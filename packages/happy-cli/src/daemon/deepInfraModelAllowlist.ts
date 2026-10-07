@@ -5,6 +5,11 @@ export const DEEPINFRA_MODEL_CATALOG = [
     displayName: 'DeepSeek V4 Flash',
   },
   {
+    catalogId: 'moonshotai/Kimi-K2.6',
+    id: 'deepinfra/moonshotai/Kimi-K2.6',
+    displayName: 'Kimi K2.6 (vision)',
+  },
+  {
     catalogId: 'zai-org/GLM-5.2',
     id: 'openai/zai-org/GLM-5.2',
     displayName: 'GLM-5.2',
