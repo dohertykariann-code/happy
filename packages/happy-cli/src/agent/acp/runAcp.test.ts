@@ -5,12 +5,19 @@ import { CHANGE_TITLE_INSTRUCTION } from '@/gemini/constants';
 const mocks = vi.hoisted(() => {
   const sessionHandlers = new Map<string, (params: any) => Promise<any> | any>();
   let userMessageHandler: ((message: any) => void) | null = null;
+  let fileEventHandler: ((message: any) => void) | null = null;
   let killHandler: (() => Promise<void>) | null = null;
 
   const mockSession = {
     onUserMessage: vi.fn((handler: (message: any) => void) => {
       userMessageHandler = handler;
     }),
+    onFileEvent: vi.fn((handler: (message: any) => void) => {
+      fileEventHandler = handler;
+    }),
+    trackAttachmentDownload: vi.fn(),
+    drainAttachmentsForUserMessage: vi.fn<() => Promise<Array<{ data: Uint8Array; mimeType: string; name: string }>>>(async () => []),
+    downloadAndDecryptAttachment: vi.fn(),
     keepAlive: vi.fn(),
     sendSessionProtocolMessage: vi.fn(),
     sendSessionEvent: vi.fn(),
@@ -30,7 +37,7 @@ const mocks = vi.hoisted(() => {
 
   const backendState = {
     listeners: [] as Array<(message: any) => void>,
-    prompts: [] as Array<{ sessionId: string; prompt: string }>,
+    prompts: [] as Array<{ sessionId: string; prompt: string; attachments?: any[] }>,
     setConfigOptionCalls: [] as Array<{ configId: string; value: string }>,
     setModeCalls: [] as string[],
     setModelCalls: [] as string[],
@@ -59,8 +66,12 @@ const mocks = vi.hoisted(() => {
     mockConsoleLog: vi.spyOn(console, 'log').mockImplementation(() => {}),
     sessionHandlers,
     getUserMessageHandler: () => userMessageHandler,
+    getFileEventHandler: () => fileEventHandler,
     setUserMessageHandler: (handler: ((message: any) => void) | null) => {
       userMessageHandler = handler;
+    },
+    setFileEventHandler: (handler: ((message: any) => void) | null) => {
+      fileEventHandler = handler;
     },
     getKillHandler: () => killHandler,
     setKillHandler: (handler: (() => Promise<void>) | null) => {
@@ -145,8 +156,8 @@ vi.mock('./AcpBackend', () => ({
       return { sessionId: 'acp-session-1' };
     }
 
-    async sendPrompt(sessionId: string, prompt: string) {
-      mocks.backendState.prompts.push({ sessionId, prompt });
+    async sendPrompt(sessionId: string, prompt: string, attachments?: any[]) {
+      mocks.backendState.prompts.push({ sessionId, prompt, attachments });
       if (mocks.backendState.sendPromptError) {
         throw mocks.backendState.sendPromptError;
       }
@@ -200,6 +211,7 @@ describe('runAcp', () => {
     vi.clearAllMocks();
     mocks.sessionHandlers.clear();
     mocks.setUserMessageHandler(null);
+    mocks.setFileEventHandler(null);
     mocks.setKillHandler(null);
     mocks.backendState.listeners = [];
     mocks.backendState.prompts = [];
@@ -212,6 +224,8 @@ describe('runAcp', () => {
     mocks.backendState.cancelCalls = [];
     mocks.backendState.disposeCalls = 0;
     mocks.backendState.constructorArgs = null;
+    mocks.mockSession.drainAttachmentsForUserMessage.mockResolvedValue([]);
+    mocks.mockSession.downloadAndDecryptAttachment.mockReset();
 
     mocks.mockApiCreate.mockResolvedValue({
       getOrCreateMachine: mocks.mockGetOrCreateMachine,
@@ -257,6 +271,7 @@ describe('runAcp', () => {
     expect(mocks.backendState.prompts[0]).toEqual({
       sessionId: 'acp-session-1',
       prompt: `Build a test plan\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}`,
+      attachments: undefined,
     });
 
     const envelopeTypes = mocks.mockSession.sendSessionProtocolMessage.mock.calls.map(([envelope]) => envelope.ev.t);
@@ -272,6 +287,61 @@ describe('runAcp', () => {
       'Tool: ReadFile completed (callId=tool-1)',
       'Status: idle',
     ]));
+  });
+
+  it('binds downloaded image attachments to the next user prompt only', async () => {
+    const imageAttachment = {
+      data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      mimeType: 'image/png',
+      name: 'screenshot.png',
+    };
+    mocks.mockSession.downloadAndDecryptAttachment.mockResolvedValue(imageAttachment.data);
+    mocks.mockSession.drainAttachmentsForUserMessage
+      .mockResolvedValueOnce([imageAttachment])
+      .mockResolvedValueOnce([]);
+
+    const runPromise = runAcp({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+      agentName: 'openhands_local',
+      command: 'openhands',
+      args: ['acp'],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.getFileEventHandler()).toBeTypeOf('function');
+      expect(mocks.getUserMessageHandler()).toBeTypeOf('function');
+    });
+
+    mocks.getFileEventHandler()!({
+      content: { data: { ev: { ref: 'file-ref', name: 'screenshot.png', mimeType: 'image/heic' } } },
+    });
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Describe the screenshot' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(1);
+    });
+
+    mocks.getUserMessageHandler()!({
+      role: 'user',
+      content: { type: 'text', text: 'Now summarize it' },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.backendState.prompts).toHaveLength(2);
+    });
+
+    await mocks.getKillHandler()!();
+    await runPromise;
+
+    expect(mocks.mockSession.downloadAndDecryptAttachment).toHaveBeenCalledWith('file-ref');
+    expect(mocks.mockSession.trackAttachmentDownload).toHaveBeenCalledTimes(1);
+    expect(mocks.backendState.prompts.map((entry) => entry.attachments)).toEqual([
+      [imageAttachment],
+      undefined,
+    ]);
   });
 
   it('appends the wrapped title instruction to every ACP turn', async () => {
@@ -300,8 +370,8 @@ describe('runAcp', () => {
     await runPromise;
 
     expect(mocks.backendState.prompts).toEqual([
-      { sessionId: 'acp-session-1', prompt: `First task\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}` },
-      { sessionId: 'acp-session-1', prompt: `Second task\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}` },
+      { sessionId: 'acp-session-1', prompt: `First task\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}`, attachments: undefined },
+      { sessionId: 'acp-session-1', prompt: `Second task\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}`, attachments: undefined },
     ]);
   });
 

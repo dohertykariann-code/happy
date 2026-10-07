@@ -864,8 +864,27 @@ export async function runAcp(opts: {
 
   backend.onMessage(onBackendMessage);
 
-  session.onUserMessage((message) => {
-    if (!message.content.text) {
+  session.onFileEvent((fileEvent) => {
+    const ev = fileEvent.content.data.ev;
+    const downloadPromise = (async (): Promise<{ data: Uint8Array; mimeType: string; name: string } | null> => {
+      try {
+        const decrypted = await session.downloadAndDecryptAttachment(ev.ref);
+        if (!decrypted) {
+          logger.debug(`[${opts.agentName}] Failed to decrypt attachment: ${ev.name}`);
+          return null;
+        }
+        return { data: decrypted, mimeType: ev.mimeType ?? 'image/jpeg', name: ev.name };
+      } catch (error) {
+        logger.debug(`[${opts.agentName}] Failed to download attachment: ${ev.name}`, { error });
+        return null;
+      }
+    })();
+    session.trackAttachmentDownload(downloadPromise);
+  });
+
+  session.onUserMessage(async (message) => {
+    const attachmentsForThisMessage = await session.drainAttachmentsForUserMessage();
+    if (!message.content.text && attachmentsForThisMessage.length === 0) {
       return;
     }
 
@@ -882,7 +901,7 @@ export async function runAcp(opts: {
     messageQueue.push(message.content.text, {
       permissionMode: currentPermissionMode,
       model: currentModel,
-    });
+    }, attachmentsForThisMessage);
   });
   session.keepAlive(thinking, 'remote');
 
@@ -956,7 +975,7 @@ export async function runAcp(opts: {
           await switchModelIfRequested(batch.mode.model);
         }
         const prompt = `${batch.message}\n\n${wrapHappySystem(CHANGE_TITLE_INSTRUCTION)}`;
-        await backend.sendPrompt(acpSessionId, prompt);
+        await backend.sendPrompt(acpSessionId, prompt, batch.attachments);
         await turnEnded;
         sendEnvelopes(sessionManager.endTurn('completed'));
         session.sendSessionEvent({ type: 'ready' });
