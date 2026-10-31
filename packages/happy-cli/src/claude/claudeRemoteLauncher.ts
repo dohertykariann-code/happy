@@ -17,6 +17,13 @@ import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
 import { getToolName } from "./utils/getToolName";
 import { getAskUserQuestionToolCallIds } from "./utils/questionNotification";
 import { launchFailureMessage } from "./utils/launchFailureMessage";
+import {
+    buildUsageCapFailoverPrompt,
+    getUsageCapFailoverConfig,
+    isClaudeUsageCapExhausted,
+    readClaudeSessionRecap,
+    withoutClaudeResumeArgs,
+} from "./utils/usageCapFailover";
 import { cleanupStdinAfterInk } from "@/utils/terminalStdinCleanup";
 import type { MessageParam, ContentBlockParam } from '@anthropic-ai/sdk/resources';
 
@@ -280,6 +287,11 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             message: MessageParam['content'];
             mode: EnhancedMode;
         } | null = null;
+        const resolvedConfigDir = session.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? process.env.CLAUDE_CONFIG_DIR;
+        const usageCapFailover = getUsageCapFailoverConfig(resolvedConfigDir);
+        let launchClaudeEnvVars = session.claudeEnvVars;
+        let launchClaudeArgs = session.claudeArgs;
+        let failoverTriggered = false;
 
         // Track session ID to detect when it actually changes
         // This prevents context loss when mode changes (permission mode, model, etc.)
@@ -416,8 +428,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         });
                     },
                     onThinkingChange: session.onThinkingChange,
-                    claudeEnvVars: session.claudeEnvVars,
-                    claudeArgs: session.claudeArgs,
+                    claudeEnvVars: launchClaudeEnvVars,
+                    claudeArgs: launchClaudeArgs,
                     onMessage,
                     onCompletionEvent: (message: string) => {
                         logger.debug(`[remote]: Completion event: ${message}`);
@@ -454,6 +466,26 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             } catch (e) {
                 logger.debug('[remote]: launch error', e);
                 if (!exitReason) {
+                    if (usageCapFailover && !failoverTriggered && isClaudeUsageCapExhausted(e)) {
+                        failoverTriggered = true;
+                        let recap = '';
+                        try {
+                            recap = await readClaudeSessionRecap(usageCapFailover.fromConfigDir);
+                        } catch (recapError) {
+                            logger.debug('[remote]: usage-cap failover recap failed; continuing without recap', recapError);
+                        }
+                        session.clearSessionId();
+                        launchClaudeEnvVars = {
+                            ...session.claudeEnvVars,
+                            CLAUDE_CONFIG_DIR: usageCapFailover.toConfigDir,
+                        };
+                        launchClaudeArgs = withoutClaudeResumeArgs(session.claudeArgs);
+                        pending = {
+                            message: buildUsageCapFailoverPrompt(recap),
+                            mode: mode ?? { permissionMode: 'default' },
+                        };
+                        continue;
+                    }
                     session.client.closeClaudeSessionTurn('failed');
                     session.client.sendSessionEvent({ type: 'message', message: launchFailureMessage(e) });
                     continue;
