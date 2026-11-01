@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "title": "September 20 - Closer to Happy Desktop",
+      "summary": "",
+      "markdown": "- **Bots** — make one from your phone: pick a face, name it, start talking.\n- **In sync** — drafts follow you between phone and desktop, and sent messages show when the agent picks them up.\n- **Colored diffs** — highlighted, with a workspace's full branch changes.\n- **Projects** — Group by Project shows checkouts, with their chats as tabs.\n- **Paste a picture** — the + in the composer now asks Paste or Photo Library, so a screenshot goes straight in.\n- **Send stays put** — a long model name shortens instead of pushing the send button out of the composer.\n- **Fixes** — chats open faster, history loads on scroll, Android prompts stay put.\n- Community Credits: [@f-liva](https://github.com/f-liva), [@chphch](https://github.com/chphch), [@a37836323](https://github.com/a37836323), [@suntaoathome](https://github.com/suntaoathome)."
+    },
+    {
       "title": "September 5 - New models, clearer changes",
       "summary": "",
       "markdown": "- **New models** - GPT-6 Astra in Codex and Fable 5.1 in Claude.\n- **Review changes on your phone** - Session info → View changes, with a file list, before/after images, expandable context, and whitespace filtering.\n- **Cleaner diffs** - tap a file in a patch to open it full-screen. Added and deleted files now display correctly.\n- **Steadier chats** - the chat holds its place when the keyboard opens, and older messages load more reliably."
@@ -101,5 +106,5 @@
       "markdown": "- E2E encrypted sessions.\n- Voice assistant.\n- File manager with syntax highlighting.\n- Real-time sync across devices."
     }
   ],
-  "latestTitle": "September 5 - New models, clearer changes"
+  "latestTitle": "September 20 - Closer to Happy Desktop"
 }

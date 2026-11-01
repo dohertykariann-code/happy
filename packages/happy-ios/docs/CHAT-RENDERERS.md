@@ -1,0 +1,85 @@
+# Chat list
+
+Both chats draw their transcripts on UltraList: the Happy account chat
+(`LegacyChatViewController`, through `ChatListView` and
+`ChatUltraListAdapter`) and the agents' chat (`ChatViewController`, through
+`AgentChatUltraList`). The UICollectionView renderer, the agents' chat's
+own scroll view and the Appearance setting that chose between them are
+gone; an account's stored choice is deleted on its first launch
+(`LocalSettings.Keys.retired`).
+
+The legacy chat consumes the off-main `ChatRows` pipeline, rendered history
+window, `ChatRowPlan` measurements and changesets. The composer,
+permissions, question forms, copy menus, links and history pager keep their
+controller actions.
+
+`ChatUltraListAdapter` uses `UltraListView(engineMode: .keyframe)` with
+inverted content and inverted rows (`ChatListView.flip`). `NodeRow` prepares
+and draws static boxes, text and icons in the library's bounded preparation
+window. TextKit drawing and link hit testing share a lock because they can
+run on different queues. Drawings resolve the captured appearance explicitly
+and redraw after appearance or display-scale changes.
+
+Static drawing uses 512-point bitmap tiles. Rows taller than 4096 points use
+the native canvas (`ChatPlanView`) to bound retained bitmap memory. A row
+also uses that canvas if its painter order requires a static mark above
+earlier live content. The pooled native overlay retains scrollers, diff
+controls, images, timers and Mermaid pages across revisions of the same row.
+Row opacity applies once to each drawing and overlay.
+
+The adapter reads positions from the library's committed row descriptors and
+frames. Ordinary mutations carry no absolute scroll target, so background
+preparation cannot replay an old target after a drag starts. Following near
+the newest edge and pinning an expanded tool are checked against the
+committed window and a user-motion generation. Insets compensate for dock
+and keyboard movement while idle; under a finger they preserve physical
+content movement. Reduce Motion drops the follow animations.
+
+With the floating dock (a phone in portrait) the keyboard comes from
+UltraView's own integration (`ChatUltraKeyboard` over the library's
+`KeyboardDismissalController`), only while the chat is shown. A finger
+dragging down from the list carries the keyboard, the dock and the newest
+inset together, and its release plays the library's dismissal or return.
+Keyboard frame notifications go to the controller first; the rest move the
+inset on the library's keyboard transition. The dock, the scroll button, the
+scrim and an empty chat's placeholder ride the inset's motion through
+`applyViewportMotion`. Where the controller can't drive the keyboard, the
+list keeps the system's interactive dismissal.
+
+Docked (a tablet, a phone on its side) the list's frame ends at the dock and
+changes height with the keyboard, and UltraView has no public way yet to
+carry a list's frame or clip on that motion. There the keyboard layout guide
+moves the screen and the controller is never made.
+
+The agents' chat has the same keyboard (`ChatViewController.ultraKeyboard`)
+wherever it is shown, since its list always runs under the card: the card,
+the context meter, the jump button, the composer's scrim and new work's
+panel ride the inset's motion. UltraList never moves inside a UIView
+animation, so a layout made in one (the card growing a line, the sessions'
+composer growing) passes the animation's own curve and duration to the
+list's inset (`insetMotion`); given none, the inset moves at once while the
+composer glides, and the rows jump ahead of it. That was the agents' chat's
+keyboard jump once it moved onto UltraList: its inset went in the
+keyboard's UIView animation with no transition of its own, so the rows
+landed 311 points in one frame while the card took the keyboard's whole
+animation.
+`HostedChatKeyboardMotionTests` samples every frame of both chats from
+their presentation layers, at the newest row and back in the history, as
+the system keyboard shows and hides and as the composer grows, and
+`ChatScrollUITests` drives both with a finger (`-screen agentChat` opens
+the agents' chat in the harness).
+
+The agents' chat preview (a context-menu preview of a chat) uses the same
+list, untouchable, showing the newest row from its start
+(`AgentChatUltraList.showsNewestFromItsStart`) under its fade.
+
+The dependency revision is pinned in `Package.swift` and `Package.resolved`;
+the XcodeGen project consumes that local package. UIKit tests cover native
+view reuse, stale actions, tall rows and painter order. Hosted tests
+exercise reading anchors, keyboard and dock insets, older pages and a
+prepared token arriving after a drag starts. The chat harness reports the
+renderer (always `UltraList`) and waits for displayed content. The Home
+harness pushes its seeded sessions through the normal Home navigation and
+SQLite-backed chat path. `-fixture diagrams` exercises asynchronous Mermaid
+sizing and `-fixture giant` contains one very tall message; `long` instead
+contains many ordinary rows.

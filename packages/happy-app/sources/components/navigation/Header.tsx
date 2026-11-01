@@ -41,6 +41,8 @@ interface HeaderProps {
     headerBackdropVariant?: MobileHeaderScrimVariant;
     mobileTitleSurface?: 'glass' | 'plain';
     mobileTitleAlignment?: 'start' | 'center';
+    /** Navigation's explicit alignment applies on phones, tablets and desktop. */
+    titleAlignment?: 'start' | 'center';
     safeAreaEnabled?: boolean;
 }
 
@@ -66,6 +68,7 @@ export const Header = React.memo((props: HeaderProps) => {
         headerBackdropVariant = 'subtle',
         mobileTitleSurface = 'glass',
         mobileTitleAlignment = 'start',
+        titleAlignment,
         safeAreaEnabled = true,
     } = props;
 
@@ -80,7 +83,7 @@ export const Header = React.memo((props: HeaderProps) => {
     const headerLeftUsesGlass = headerLeftGlass && glassControlsEnabled;
     const headerRightUsesGlass = headerRightGlass && glassControlsEnabled;
     const contentHeight = glassControlsEnabled ? Math.max(headerHeight, MOBILE_GLASS_HEADER_HEIGHT) : headerHeight;
-    const centerMobileTitle = isNativePhone && mobileTitleAlignment === 'center';
+    const centerTitle = (titleAlignment ?? (isNativePhone ? mobileTitleAlignment : 'start')) === 'center';
     const homeBackdrop = headerBackdropVariant === 'home';
     const strongBackdrop = headerBackdropVariant !== 'subtle';
     // Mount/unmount fade only - it must land on exactly 1, because a
@@ -155,27 +158,31 @@ export const Header = React.memo((props: HeaderProps) => {
     return (
         <View style={containerStyle}>
             {glassControlsEnabled && backdropMounted && (
-                <Animated.View
+                <View
                     pointerEvents="none"
                     style={[
                         styles.headerBackdrop,
                         homeBackdrop
                             ? styles.headerBackdropHome
                             : strongBackdrop && styles.headerBackdropStrong,
-                        { opacity: backdropOpacity },
                     ]}
                 >
-                    <MobileHeaderScrim
-                        variant={headerBackdropVariant}
-                        overlayOpacity={backdropStrength}
-                    />
-                </Animated.View>
+                    {/* RN Animated flattens its style array. Keep Unistyles on
+                        the static wrapper so their native dependency markers
+                        are not merged into one invalid animated style object. */}
+                    <Animated.View style={[StyleSheet.absoluteFillObject, { opacity: backdropOpacity }]}>
+                        <MobileHeaderScrim
+                            variant={headerBackdropVariant}
+                            overlayOpacity={backdropStrength}
+                        />
+                    </Animated.View>
+                </View>
             )}
             <View style={styles.contentWrapper}>
                 <View style={[
                     styles.content,
                     isDesktop && styles.desktopContent,
-                    centerMobileTitle && styles.mobileCenteredContent,
+                    centerTitle && styles.centeredContent,
                     { height: contentHeight },
                 ]}>
                     <View style={styles.leftContainer}>
@@ -202,7 +209,7 @@ export const Header = React.memo((props: HeaderProps) => {
                     <View style={[
                         styles.centerContainer,
                         isDesktop && styles.desktopCenterContainer,
-                        centerMobileTitle && styles.mobileCenteredTitleContainer,
+                        centerTitle && styles.centeredTitleContainer,
                     ]}>
                         {glassControlsEnabled && mobileTitleSurface === 'glass' ? (
                             <MobileGlassSurface
@@ -308,8 +315,11 @@ const NavigationHeaderComponent: React.FC<NavigationHeaderComponentProps> = Reac
     const isTablet = useIsTablet();
     const isDesktop = Platform.OS === 'web' || isRunningOnMac();
 
-    // Hide back button on tablet — navigation is handled via sidebar and persistent header
-    const shouldHideBackButton = isTablet;
+    // Tablet navigation normally lives in the persistent shell. First-run
+    // onboarding intentionally removes that shell, so its scan screen still
+    // needs the ordinary stack back button (notably on Android tablets, where
+    // this custom header renders instead of UIKit's native header).
+    const shouldHideBackButton = isTablet && !route.name.startsWith('onboarding/');
     const titleAlign = options.headerTitleAlign ?? (Platform.OS === 'ios' ? 'center' : 'left');
 
     // Extract title - handle both string and function types
@@ -390,6 +400,7 @@ const NavigationHeaderComponent: React.FC<NavigationHeaderComponentProps> = Reac
             headerBackdropVariant="strong"
             mobileTitleSurface={props.mobileTitleSurfaceOverride}
             mobileTitleAlignment={titleAlign === 'center' ? 'center' : 'start'}
+            titleAlignment={titleAlign === 'center' ? 'center' : 'start'}
         />
     );
 });
@@ -449,7 +460,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         width: '100%',
         maxWidth: layout.headerMaxWidth,
     },
-    mobileCenteredContent: {
+    centeredContent: {
         justifyContent: 'space-between',
     },
     desktopContent: {
@@ -471,13 +482,14 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: Platform.OS === 'web' ? 12 : 0,
         minWidth: Platform.OS === 'web' ? undefined : 0,
     },
-    mobileCenteredTitleContainer: {
+    centeredTitleContainer: {
         position: 'absolute',
         top: 0,
         bottom: 0,
         left: 64,
         right: 64,
         alignItems: 'center',
+        justifyContent: 'center',
         paddingHorizontal: 0,
     },
     desktopCenterContainer: {

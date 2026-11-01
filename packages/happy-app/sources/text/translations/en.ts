@@ -80,6 +80,7 @@ export const en: TranslationStructure = {
         fileViewer: 'File Viewer',
         loading: 'Loading...',
         retry: 'Retry',
+        loadMore: 'Load more',
         delete: 'Delete',
         optional: 'optional',
     },
@@ -95,6 +96,7 @@ export const en: TranslationStructure = {
 
 
     status: {
+        syncing: 'syncing',
         connected: 'connected',
         connecting: 'connecting',
         disconnected: 'disconnected',
@@ -152,6 +154,7 @@ export const en: TranslationStructure = {
         termsOfService: 'Terms of Service',
         eula: 'EULA',
         supportUs: 'Support us',
+        supportUnavailable: 'Purchases are unavailable right now. Please try again later.',
         supportUsSubtitlePro: 'Thank you for your support!',
         supportUsSubtitle: 'Support project development',
         scanQrCodeToAuthenticate: 'Scan QR code to authenticate',
@@ -230,6 +233,7 @@ export const en: TranslationStructure = {
         flatList: 'Flat List',
         groupByProject: 'Group by Project',
         appearanceSettings: 'Appearance Settings',
+        worktreeTabs: ({ count }: { count: number }) => count === 1 ? '1 tab' : `${count} tabs`,
     },
 
     settingsFeatures: {
@@ -343,6 +347,9 @@ export const en: TranslationStructure = {
         forkErrorMissingMetadata: 'Missing session metadata required to fork.',
         forkErrorGeneric: 'Failed to fork the session.',
         forkClaudeOnly: 'Fork is currently only supported for Claude sessions.',
+        archiveAction: 'Archive',
+        startingChat: 'Starting a new chat…',
+        actionsTitle: 'Session',
     },
 
     commandPalette: {
@@ -352,6 +359,9 @@ export const en: TranslationStructure = {
     server: {
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Server Configuration',
+        title: 'Server',
+        serverUrlLabel: 'Server URL',
+        selfHostFooter: 'For self-hosted servers. Sign out and back in after changing it.',
         enterServerUrl: 'Please enter a server URL',
         notValidHappyServer: 'Not a valid Happy Server',
         changeServer: 'Change Server',
@@ -444,6 +454,11 @@ export const en: TranslationStructure = {
     components: {
         emptyMainScreen: {
             // Used by EmptyMainScreen component
+            connectComputer: 'Connect your computer',
+            desktopSetupInstructions: 'Install Happy Desktop from happy.engineering. In desktop setup, choose “I have the app open,” then scan the device-linking QR code here.',
+            harnessDescription: 'Use Claude Code or Codex, or try Happy Harness. Your account stays linked across your computer and phone.',
+            getDesktop: 'Get Happy Desktop',
+            terminalAlternative: 'Prefer the terminal? Set up Happy CLI',
             readyToCode: 'Ready to code?',
             installCli: 'Install the Happy CLI',
             runIt: 'Run it',
@@ -566,6 +581,9 @@ export const en: TranslationStructure = {
         hideArchived: 'Hide archived',
         newSession: 'New session',
         projects: "Projects",
+        bots: 'Bots',
+        showAllWorkspaces: ({ count }: { count: number }) => `Show all ${count} workspaces`,
+        showFewerWorkspaces: 'Show fewer',
     },
 
     zen: {
@@ -731,7 +749,7 @@ export const en: TranslationStructure = {
         },
         // Bring your own agent
         byoTitle: 'Bring Your Own Agent',
-        byoDescription: 'Use your own ElevenLabs agent instead of the Happy default. No subscription required — connect directly with your own ElevenLabs account. Your agent must define two client tools: messageClaudeCode (sends text to the coding agent) and processPermissionRequest (allows or denies tool use). It receives session context via the {{initialConversationContext}} dynamic variable.',
+        byoDescription: 'Use your own ElevenLabs agent instead of the Happy default. No subscription required — connect directly with your own ElevenLabs account. Your agent must define two client tools: sendMessageToSession (sends text to the coding agent) and processPermissionRequest (allows or denies tool use). It receives session context via the {{initialConversationContext}} dynamic variable.',
         customAgentId: 'ElevenLabs Agent ID',
         customAgentIdNotSet: 'Not configured',
         customAgentIdDescription: 'Enter your ElevenLabs agent ID. Leave empty to use the Happy default.',
@@ -739,7 +757,7 @@ export const en: TranslationStructure = {
         bypassToken: 'Direct Connection',
         bypassTokenSubtitle: 'Skip Happy server, connect straight to ElevenLabs',
         promptGuideTitle: 'Agent Prompt Guide',
-        promptGuideDescription: 'Your ElevenLabs agent needs:\n\n• Tool: messageClaudeCode — parameter: message (string). Sends a message to the active coding session.\n• Tool: processPermissionRequest — parameter: decision ("allow" or "deny"). Approves or denies a pending tool permission.\n• Dynamic variable: {{initialConversationContext}} — receives session history and context on start.\n\nThe agent acts as a voice bridge between the user and coding agents. It should be concise, only respond when addressed, and report when a coding agent finishes work.',
+        promptGuideDescription: 'Your ElevenLabs agent needs:\n\n• Tool: sendMessageToSession — parameters: sessionId (string), message (string). Sends a message to the specified coding session.\n• Tool: processPermissionRequest — parameters: requestId (string), decision ("allow" or "deny"). Approves or denies a pending tool permission.\n• Dynamic variable: {{initialConversationContext}} — receives session history and context on start.\n\nThe agent acts as a voice bridge between the user and coding agents. It should be concise, only respond when addressed, and report when a coding agent finishes work.',
         usageTitle: 'Usage (Last 30 Days)',
         usageFooter: 'Voice time used in the last 30 days. Free tier: 20 min. Subscribed: 5 hours. Max 100 conversations per month.',
         usageLabel: 'Voice Time',
@@ -755,7 +773,7 @@ export const en: TranslationStructure = {
         status: 'Status',
         statusActive: 'Active',
         statusNotAuthenticated: 'Not Authenticated',
-        anonymousId: 'Anonymous ID',
+        anonymousId: 'Analytics ID',
         publicId: 'Public ID',
         notAvailable: 'Not available',
         linkNewDevice: 'Link New Device',
@@ -774,10 +792,10 @@ export const en: TranslationStructure = {
         secretKeyCopied: 'Secret key copied to clipboard. Store it in a safe place!',
         secretKeyCopyFailed: 'Failed to copy secret key',
         privacy: 'Privacy',
-        privacyDescription: 'Help improve the app by sharing anonymous usage data. No personal information is collected.',
+        privacyDescription: 'Shares usage data, like which features you use and your device type, to help us improve Happy. Never your messages or code.',
         analytics: 'Analytics',
         analyticsDisabled: 'No data is shared',
-        analyticsEnabled: 'Anonymous usage data is shared',
+        analyticsEnabled: 'Usage data is shared',
         dangerZone: 'Danger Zone',
         logout: 'Logout',
         logoutSubtitle: 'Sign out and clear local data',
@@ -883,6 +901,94 @@ export const en: TranslationStructure = {
         loginWithMobileApp: 'Login with mobile app',
     },
 
+    onboarding: {
+        // First run on phones: create an account, then link a computer from
+        // one checklist. The same checklist is the home empty state whenever
+        // no computer is reachable.
+        headline: 'Claude, Codex, Grok\nin your pocket',
+        propEncrypted: 'End-to-end encrypted',
+        propNoPassword: 'No email, no password',
+        propOpenSource: 'Open source, MIT license',
+        createAccount: 'Create account',
+        restoreExisting: 'Restore existing account',
+        linkTitle: 'Link Your Computer',
+        installStep: 'Install Happy on your computer',
+        installBodyPrefix: 'Download Happy from ',
+        installBodyLink: 'happy.engineering',
+        installBodySuffix: '.',
+        terminalComment: '# Prefer the terminal?',
+        terminalInstall: 'npm install -g happy',
+        terminalRun: 'happy',
+        // No-break spaces keep the button name on one line.
+        openStep: 'Open Happy and choose Link\u00A0Mobile\u00A0App',
+        openBody: 'It’s the last step of setup on your computer. A QR code appears there.',
+        scanStep: 'Scan the QR code',
+        scanButton: 'Scan QR code',
+        pasteLink: 'Can’t scan QR code? Paste link instead',
+        pasteLinkTitle: 'Paste link',
+        pasteLinkMessage: 'On your computer, choose Copy auth link, then paste it here.',
+        pasteLinkConfirm: 'Link',
+        linking: 'Linking…',
+        linkFailed: 'Couldn’t link. Scan the code again.',
+        // Same checklist when every linked computer is offline.
+        offlineTitleOne: ({ name }: { name: string }) => `${name} is offline`,
+        offlineTitleMany: 'Your computers are offline',
+        offlineLinkedStep: ({ name }: { name: string }) => `Linked ${name}`,
+        offlineLinkedStepMany: ({ count }: { count: number }) => `Linked ${count} computers`,
+        offlineOpenStep: 'Open Happy on your computer',
+        offlineOpenBody: 'Open Happy Desktop, or run happy in a terminal. This screen updates as soon as it connects.',
+        offlineTroubleshoot: 'Troubleshoot',
+        linkAnother: 'Link another computer',
+        // Get help, bottom right of both first-run screens.
+        getHelp: 'Get help',
+        helpMessage: 'Stuck? Come ask us.',
+        helpDiscord: 'Ask on Discord',
+        helpBra1nDump: 'DM @bra1n_dump on X',
+        helpEx3ndr: 'DM @Ex3NDR on X',
+        helpIssues: 'Browse known issues',
+        // Gear on the link screen.
+        settingsTitle: 'Settings',
+        settingsServer: 'Server',
+        settingsServerDefault: 'Default',
+        logoutStartOver: 'Log out and start over',
+        logoutFooter: 'This account has nothing in it yet, so nothing is lost.',
+        logoutConfirmTitle: 'Log out and start over?',
+        logoutConfirmBody: 'You will go back to Create account. Nothing on your computer changes.',
+        restoreTitle: 'Restore Account',
+        restoreScan: 'Scan this code with your other phone.',
+        restoreScanPath: 'Happy › Settings › Account › Link New Device',
+        restoreUseKey: 'Use a secret key instead',
+        secretKeyTitle: 'Secret Key',
+        secretKeyBody: 'Paste your secret key. It is in Happy › Settings › Account on your other device.',
+        restoreButton: 'Restore',
+    },
+
+    troubleshoot: {
+        // Plaque at the top of the session list when every computer is
+        // offline, and the screen it opens.
+        bannerTitleOne: ({ name }: { name: string }) => `${name} is offline`,
+        bannerTitleMany: 'All machines offline',
+        bannerSubtitle: 'Troubleshoot',
+        title: 'Troubleshoot',
+        heading: 'Happy is not running on your computer',
+        intro: 'Your phone talks to Happy on your computer. When nothing is running there, everything here is offline.',
+        awakeStep: 'Is the computer awake and online?',
+        awakeBody: 'Sleep and a dropped connection are the usual causes.',
+        desktopStep: 'Is Happy Desktop open?',
+        desktopBodyPrefix: 'Open it, or download it from ',
+        desktopBodyLink: 'happy.engineering',
+        desktopBodySuffix: '. We recommend it.',
+        terminalStep: 'Using the terminal?',
+        terminalBody: 'Run happy again. The computer comes back online as soon as it starts.',
+        terminalComment: '# Not using Happy Desktop?',
+        machines: 'Machines',
+        machineOffline: 'Offline',
+        copyAiPrompt: 'Copy AI prompt',
+        copyAiPromptHint: 'Paste it into Claude Code or Codex on your computer to diagnose from the logs.',
+        copied: 'Copied',
+        copyFailed: 'Could not copy the AI prompt.',
+    },
+
     review: {
         // Used by utils/requestReview.ts
         enjoyingApp: 'Enjoying the app?',
@@ -899,7 +1005,7 @@ export const en: TranslationStructure = {
     machine: {
         launchNewSessionInDirectory: 'Launch New Session in Directory',
         offlineUnableToSpawn: 'Launcher disabled while machine is offline',
-        offlineHelp: '• Make sure your computer is online\n• Run `happy daemon status` to diagnose\n• Are you running the latest CLI version? Upgrade with `npm install -g happy@latest`',
+        offlineHelp: '• Run `happy daemon start` on your computer\n• Make sure your computer is online\n• Run `happy daemon status` to diagnose\n• Are you running the latest CLI version? Upgrade with `npm install -g happy@latest`',
         daemon: 'Daemon',
         status: 'Status',
         stopDaemon: 'Stop Daemon',
@@ -938,7 +1044,11 @@ export const en: TranslationStructure = {
         unknownEvent: 'Unknown event',
         usageLimitUntil: ({ time }: { time: string }) => `Usage limit reached until ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `Not sent: ${reason}`,
         unknownTime: 'unknown time',
+        mediaPosition: ({ index, total }: { index: number; total: number }) => `${index} of ${total}`,
     },
 
     codex: {
@@ -1088,6 +1198,11 @@ export const en: TranslationStructure = {
         sourceCamera: 'Take Photo',
         cameraPermissionTitle: 'Camera Access',
         cameraPermissionMessage: 'Allow access to your camera to take photos for messages.',
+        attachTitle: 'Add Image',
+        pasteFromClipboard: 'Paste from Clipboard',
+        chooseFromLibrary: 'Photo Library',
+        nothingToPasteTitle: 'Nothing to Paste',
+        nothingToPasteMessage: 'Copy an image first, then try again.',
     },
 
     feed: {
@@ -1096,6 +1211,17 @@ export const en: TranslationStructure = {
         friendRequestGeneric: 'New friend request',
         friendAccepted: ({ name }: { name: string }) => `You are now friends with ${name}`,
         friendAcceptedGeneric: 'Friend request accepted',
+    },
+
+    // What new work will be, in the middle of its empty chat (the native apps' compose).
+    newWork: {
+        task: 'Task',
+        bot: 'Bot',
+        name: 'Name (optional)',
+        taskNote: 'A task names itself from its first message unless you name it.',
+        botNote: 'A bot is one lasting conversation with a folder of its own.',
+        taskFailed: ({ reason }: { reason: string }) => `The task could not be started. ${reason} Your text and attachments are still here.`,
+        botFailed: ({ reason }: { reason: string }) => `The bot could not be started. ${reason} Your text and attachments are still here.`,
     },
 
 } as const;

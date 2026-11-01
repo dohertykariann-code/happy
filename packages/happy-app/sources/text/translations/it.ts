@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_default';
+import { en, type TranslationStructure } from '../_default';
 
 /**
  * Italian plural helper function
@@ -64,6 +64,7 @@ export const it: TranslationStructure = {
         fileViewer: 'Visualizzatore file',
         loading: 'Caricamento...',
         retry: 'Riprova',
+        loadMore: 'Carica altro',
         delete: 'Elimina',
         optional: 'opzionale',
         saveAs: 'Salva con nome',
@@ -79,6 +80,7 @@ export const it: TranslationStructure = {
     },
 
     status: {
+        syncing: 'sincronizzazione',
         connected: 'connesso',
         connecting: 'connessione in corso',
         disconnected: 'disconnesso',
@@ -136,6 +138,7 @@ export const it: TranslationStructure = {
         termsOfService: 'Termini di servizio',
         eula: 'EULA',
         supportUs: 'Sostienici',
+        supportUnavailable: 'Gli acquisti non sono disponibili al momento. Riprova più tardi.',
         supportUsSubtitlePro: 'Grazie per il tuo supporto!',
         supportUsSubtitle: 'Sostieni lo sviluppo del progetto',
         scanQrCodeToAuthenticate: 'Scansiona il codice QR per autenticarti',
@@ -214,6 +217,7 @@ export const it: TranslationStructure = {
         flatList: 'Elenco semplice',
         groupByProject: 'Raggruppa per progetto',
         appearanceSettings: 'Impostazioni aspetto',
+        worktreeTabs: ({ count }: { count: number }) => count === 1 ? '1 scheda' : `${count} schede`,
     },
 
     settingsFeatures: {
@@ -327,6 +331,9 @@ export const it: TranslationStructure = {
         forkErrorMissingMetadata: 'Mancano i metadati della sessione necessari per biforcare.',
         forkErrorGeneric: 'Impossibile biforcare la sessione.',
         forkClaudeOnly: 'La biforcazione è attualmente supportata solo per le sessioni Claude.',
+        archiveAction: 'Archivia',
+        startingChat: 'Avvio di una nuova chat…',
+        actionsTitle: 'Sessione',
     },
 
     commandPalette: {
@@ -334,6 +341,9 @@ export const it: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Configurazione server',
         enterServerUrl: 'Inserisci un URL del server',
@@ -427,6 +437,7 @@ export const it: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: 'Pronto a programmare?',
             installCli: 'Installa la CLI Happy',
@@ -550,6 +561,9 @@ export const it: TranslationStructure = {
         hideArchived: 'Nascondi archiviate',
         newSession: 'Nuova sessione',
         projects: "Progetti",
+        bots: 'Bot',
+        showAllWorkspaces: ({ count }: { count: number }) => `Mostra tutti i ${count} spazi di lavoro`,
+        showFewerWorkspaces: 'Mostra meno',
     },
 
     zen: {
@@ -715,7 +729,7 @@ export const it: TranslationStructure = {
         },
         // Bring your own agent
         byoTitle: 'Porta il tuo agente',
-        byoDescription: 'Usa il tuo agente ElevenLabs al posto di quello predefinito di Happy. Nessun abbonamento richiesto — connettiti direttamente con il tuo account ElevenLabs. Il tuo agente deve definire due strumenti client: messageClaudeCode (invia testo all\'agente di codice) e processPermissionRequest (consente o nega l\'uso degli strumenti). Riceve il contesto della sessione tramite la variabile dinamica {{initialConversationContext}}.',
+        byoDescription: 'Usa il tuo agente ElevenLabs al posto di quello predefinito di Happy. Nessun abbonamento richiesto — connettiti direttamente con il tuo account ElevenLabs. Il tuo agente deve definire due strumenti client: sendMessageToSession (invia testo all\'agente di codice) e processPermissionRequest (consente o nega l\'uso degli strumenti). Riceve il contesto della sessione tramite la variabile dinamica {{initialConversationContext}}.',
         customAgentId: 'ElevenLabs Agent ID',
         customAgentIdNotSet: 'Non configurato',
         customAgentIdDescription: 'Inserisci il tuo ElevenLabs Agent ID. Lascia vuoto per usare quello predefinito di Happy.',
@@ -723,7 +737,7 @@ export const it: TranslationStructure = {
         bypassToken: 'Connessione diretta',
         bypassTokenSubtitle: 'Salta il server di Happy, connettiti direttamente a ElevenLabs',
         promptGuideTitle: 'Guida al prompt dell\'agente',
-        promptGuideDescription: 'Il tuo agente ElevenLabs necessita:\n\n• Strumento: messageClaudeCode — parametro: message (string). Invia un messaggio alla sessione di codice attiva.\n• Strumento: processPermissionRequest — parametro: decision ("allow" o "deny"). Approva o nega un permesso di strumento in sospeso.\n• Variabile dinamica: {{initialConversationContext}} — riceve la cronologia e il contesto della sessione all\'avvio.\n\nL\'agente funge da ponte vocale tra l\'utente e gli agenti di codice. Deve essere conciso, rispondere solo quando interpellato e segnalare quando un agente di codice termina il lavoro.',
+        promptGuideDescription: 'Il tuo agente ElevenLabs necessita:\n\n• Strumento: sendMessageToSession — parametri: sessionId (string), message (string). Invia un messaggio alla sessione di codice specificata.\n• Strumento: processPermissionRequest — parametri: requestId (string), decision ("allow" o "deny"). Approva o nega un permesso di strumento in sospeso.\n• Variabile dinamica: {{initialConversationContext}} — riceve la cronologia e il contesto della sessione all\'avvio.\n\nL\'agente funge da ponte vocale tra l\'utente e gli agenti di codice. Deve essere conciso, rispondere solo quando interpellato e segnalare quando un agente di codice termina il lavoro.',
         usageTitle: 'Utilizzo (ultimi 30 giorni)',
         usageFooter: 'Tempo vocale utilizzato negli ultimi 30 giorni. Piano gratuito: 20 min. Abbonato: 5 ore. Max 100 conversazioni al mese.',
         usageLabel: 'Tempo vocale',
@@ -739,7 +753,7 @@ export const it: TranslationStructure = {
         status: 'Stato',
         statusActive: 'Attivo',
         statusNotAuthenticated: 'Non autenticato',
-        anonymousId: 'ID anonimo',
+        anonymousId: 'ID analytics',
         publicId: 'ID pubblico',
         notAvailable: 'Non disponibile',
         linkNewDevice: 'Collega nuovo dispositivo',
@@ -758,10 +772,10 @@ export const it: TranslationStructure = {
         secretKeyCopied: 'Chiave segreta copiata negli appunti. Conservala in un luogo sicuro!',
         secretKeyCopyFailed: 'Impossibile copiare la chiave segreta',
         privacy: 'Privacy',
-        privacyDescription: 'Aiuta a migliorare l\'app condividendo dati di utilizzo anonimi. Nessuna informazione personale viene raccolta.',
+        privacyDescription: 'Condivide dati di utilizzo, come le funzioni che usi e il tipo del tuo dispositivo, per aiutarci a migliorare Happy. Mai i tuoi messaggi o il tuo codice.',
         analytics: 'Analytics',
         analyticsDisabled: 'Nessun dato condiviso',
-        analyticsEnabled: 'I dati di utilizzo anonimi sono condivisi',
+        analyticsEnabled: 'I dati di utilizzo sono condivisi',
         dangerZone: 'Zona pericolosa',
         logout: 'Esci',
         logoutSubtitle: 'Disconnetti e cancella i dati locali',
@@ -858,6 +872,14 @@ export const it: TranslationStructure = {
         friends: 'Amici',
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
+    troubleshoot: {
+        ...en.troubleshoot,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Client mobile di Codex e Claude Code',
@@ -922,7 +944,11 @@ export const it: TranslationStructure = {
         unknownEvent: 'Evento sconosciuto',
         usageLimitUntil: ({ time }: { time: string }) => `Limite di utilizzo raggiunto fino a ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `Non inviato: ${reason}`,
         unknownTime: 'ora sconosciuta',
+        mediaPosition: ({ index, total }: { index: number; total: number }) => `${index} di ${total}`,
     },
 
     codex: {
@@ -1072,6 +1098,11 @@ export const it: TranslationStructure = {
         sourceCamera: 'Scatta foto',
         cameraPermissionTitle: 'Accesso fotocamera',
         cameraPermissionMessage: "Consenti l'accesso alla fotocamera per scattare foto nei messaggi.",
+        attachTitle: 'Aggiungi immagine',
+        pasteFromClipboard: 'Incolla dagli appunti',
+        chooseFromLibrary: 'Libreria foto',
+        nothingToPasteTitle: 'Niente da incollare',
+        nothingToPasteMessage: 'Copia prima un\'immagine, poi riprova.',
     },
 
     feed: {
@@ -1080,7 +1111,19 @@ export const it: TranslationStructure = {
         friendRequestGeneric: 'Nuova richiesta di amicizia',
         friendAccepted: ({ name }: { name: string }) => `Ora sei amico di ${name}`,
         friendAcceptedGeneric: 'Richiesta di amicizia accettata',
-    }
+    },
+
+    // What new work will be, in the middle of its empty chat (the native apps' compose).
+    newWork: {
+        task: 'Attività',
+        bot: 'Bot',
+        name: 'Nome (facoltativo)',
+        taskNote: 'Un’attività prende il nome dal suo primo messaggio, a meno che tu non gliene dia uno.',
+        botNote: 'Un bot è una conversazione duratura con una cartella tutta sua.',
+        taskFailed: ({ reason }: { reason: string }) => `Impossibile avviare l’attività. ${reason} Il testo e gli allegati sono ancora qui.`,
+        botFailed: ({ reason }: { reason: string }) => `Impossibile avviare il bot. ${reason} Il testo e gli allegati sono ancora qui.`,
+    },
+
 } as const;
 
 export type TranslationsIt = typeof it;

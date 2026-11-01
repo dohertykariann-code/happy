@@ -81,7 +81,7 @@ function hasCodexSubagentReference(message: Record<string, unknown>): boolean {
     return false;
 }
 
-const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol';
+const DEFAULT_CODEX_MODEL = 'gpt-6.1-sol';
 const DEFAULT_CODEX_EFFORT: ReasoningEffort = 'medium';
 // Codex's app-server protocol requires a concrete approval policy and sandbox
 // on every turn, so unlike Claude there is no "send nothing" here. This is the
@@ -561,14 +561,16 @@ export async function runCodex(opts: {
     // call in claudeRemoteLauncher for the full rationale.
     permissionHandler.reset('Previous CLI process exited before responding');
     reasoningProcessor = new ReasoningProcessor((message) => {
-        const envelopes = mapCodexProcessorMessageToSessionEnvelopes(message, { currentTurnId });
-        for (const envelope of envelopes) {
+        const mapped = mapCodexProcessorMessageToSessionEnvelopes(message, { currentTurnId });
+        currentTurnId = mapped.currentTurnId;
+        for (const envelope of mapped.envelopes) {
             session.sendSessionProtocolMessage(envelope);
         }
     });
     const diffProcessor = new DiffProcessor((message) => {
-        const envelopes = mapCodexProcessorMessageToSessionEnvelopes(message, { currentTurnId });
-        for (const envelope of envelopes) {
+        const mapped = mapCodexProcessorMessageToSessionEnvelopes(message, { currentTurnId });
+        currentTurnId = mapped.currentTurnId;
+        for (const envelope of mapped.envelopes) {
             session.sendSessionProtocolMessage(envelope);
         }
     });

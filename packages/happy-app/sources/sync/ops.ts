@@ -10,6 +10,7 @@ import type { AgentQuestionAnswer, MachineMetadata, SessionAgentModesPatch } fro
 import { markAgentModePushPending, clearAgentModePushPending, type AgentModeField } from './agentModesPending';
 import {
     isRigMetadata,
+    isRigMetadataV1,
     rigCanAbort,
     rigCanReadFiles,
     rigCanSearchFiles,
@@ -17,7 +18,9 @@ import {
     rigCanWriteFiles,
     rigHasRpcMethod,
 } from './rig';
+import { rigComposerSetMode } from './rigComposer';
 import type { HappyAgentSpawnTarget } from './happyAgentSpawn';
+import { encodeBase64 } from '@/encryption/base64';
 
 export type { SessionAgentModesPatch };
 
@@ -332,7 +335,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             'spawn-happy-session',
             request,
         );
-        return result;
+        return normalizeSpawnSessionResult(result);
     } catch (error) {
         // Handle RPC errors
         return {
@@ -340,6 +343,25 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             errorMessage: error instanceof Error ? error.message : 'Failed to spawn session'
         };
     }
+}
+
+/**
+ * The machine RPC answer, with its refusal always under `errorMessage`.
+ *
+ * Earlier Happy Agent daemons answered a refused catalog spawn with `message`
+ * instead, which this read as an alert with nothing in it. Nothing here parses
+ * the payload otherwise, so the one field the flow reads is settled here.
+ */
+export function normalizeSpawnSessionResult(result: unknown): SpawnSessionResult {
+    if (typeof result !== 'object' || result === null || typeof (result as { type?: unknown }).type !== 'string') {
+        return { type: 'error', errorMessage: 'The machine answered with something Happy could not read.' };
+    }
+    const answer = result as Record<string, unknown> & { type: string };
+    if (answer.type !== 'error') return answer as SpawnSessionResult;
+    const errorMessage = [answer.errorMessage, answer.message].find(
+        (value): value is string => typeof value === 'string' && value.length > 0,
+    );
+    return { type: 'error', errorMessage: errorMessage ?? 'Failed to spawn session' };
 }
 
 /**
@@ -493,15 +515,71 @@ export async function codexListRewindPoints(
     }
 }
 
+/**
+ * Everything the daemon needs to revive a session it has no memory of. The
+ * daemon cannot build this itself: reconnecting requires the per-session data
+ * key, and ~/.happy/access.key only holds the account *public* key, so a
+ * session the daemon did not create is undecryptable to it. The client is the
+ * only party holding the account secret, so it ships the key and the already
+ * decrypted metadata over the machine RPC — which is end-to-end encrypted with
+ * the machine key (apiSocket.machineRPC), the same key the daemon already has.
+ */
+type ResumeFallbackPayload = {
+    metadata: unknown;
+    metadataVersion: number;
+    agentStateVersion: number;
+    seq: number;
+    encryptionKey: string;
+    encryptionVariant: 'dataKey';
+};
+
+/**
+ * `fallback: undefined` disappears in JSON, so a client that cannot build one
+ * is indistinguishable on the wire from a client too old to know about it.
+ * The reason is always sent: the daemon puts it in the error message, which is
+ * the only place a user can see why an untracked session refused to resume.
+ */
+function buildResumeFallback(sessionId: string, machineId: string): { fallback?: ResumeFallbackPayload; reason: string } {
+    const session = storage.getState().sessions[sessionId];
+    if (!session || !session.metadata) {
+        return { reason: 'client-has-no-session-row' };
+    }
+    // Only the session's owning machine may receive its data key.
+    if (session.metadata.machineId !== machineId) {
+        return { reason: 'client-session-machine-mismatch' };
+    }
+    // Legacy sessions encrypt with the account master secret; that never
+    // leaves this device, so they stay resumable only while tracked.
+    const dataKey = sync.encryption.getSessionDataKey(sessionId);
+    if (!dataKey) {
+        return { reason: 'client-has-no-data-key' };
+    }
+    return {
+        reason: 'ok',
+        fallback: {
+            metadata: session.metadata,
+            metadataVersion: session.metadataVersion,
+            agentStateVersion: session.agentStateVersion,
+            seq: session.seq,
+            encryptionKey: encodeBase64(dataKey),
+            encryptionVariant: 'dataKey',
+        },
+    };
+}
+
 export async function machineResumeSession(options: ResumeSessionOptions & { model?: string; permissionMode?: string }): Promise<SpawnSessionResult> {
     const { machineId, sessionId, model, permissionMode } = options;
 
     try {
-        const result = await apiSocket.machineRPC<SpawnSessionResult, { sessionId: string; model?: string; permissionMode?: string }>(
+        const { fallback, reason } = buildResumeFallback(sessionId, machineId);
+        const result = await apiSocket.machineRPC<SpawnSessionResult | { error: string }, { sessionId: string; model?: string; permissionMode?: string; fallback?: unknown; fallbackReason?: string }>(
             machineId,
             'resume-happy-session',
-            { sessionId, model, permissionMode },
+            { sessionId, model, permissionMode, fallback, fallbackReason: reason },
         );
+        if ('error' in result) {
+            return { type: 'error', errorMessage: result.error };
+        }
         return result;
     } catch (error) {
         return {
@@ -754,6 +832,13 @@ export function sessionSetAgentModes(sessionId: string, patch: SessionAgentModes
     const state = storage.getState();
     const session = state.sessions[sessionId];
 
+    // Happy Agent sessions carry their pickers inside the synced composer
+    // draft, so the pick is written there as part of the whole draft.
+    if (isRigMetadataV1(session?.metadata)) {
+        rigComposerSetMode(sessionId, patch);
+        return;
+    }
+
     // Only touch fields that actually change — clearing modes on a session
     // with no picks (e.g. every abort) must not cost a metadata round-trip.
     // A pick counts as changed when it differs from the local mirror OR from
@@ -807,6 +892,25 @@ export async function sessionAbort(sessionId: string): Promise<void> {
     await apiSocket.sessionRPC(sessionId, 'abort', isRigMetadata(metadata) ? {} : {
         reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`
     });
+}
+
+/**
+ * Puts a picture already uploaded to the session's attachment store onto the
+ * bot behind a Happy Agent session. The agent downloads it by ref the way it
+ * downloads a picture attached to a message, so nothing else travels here.
+ */
+export async function sessionSetAvatar(
+    sessionId: string,
+    picture: { ref: string; size: number; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' },
+): Promise<void> {
+    const response = await apiSocket.sessionRPC<{ success?: boolean; error?: string }, typeof picture>(
+        sessionId,
+        'setAvatar',
+        picture,
+    );
+    if (response?.success !== true) {
+        throw new Error(response?.error ?? 'The picture could not be set.');
+    }
 }
 
 /**

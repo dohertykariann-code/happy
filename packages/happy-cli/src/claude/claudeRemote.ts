@@ -30,6 +30,8 @@ function withTitleInstruction(content: MessageParam['content']): MessageParam['c
 
     return [...content, titleInstruction];
 }
+import { pluginsFromArgs } from './utils/pluginsFromArgs';
+import { claudeProviderAuthMessage } from './utils/providerAuth';
 
 export async function claudeRemote(opts: {
 
@@ -51,7 +53,7 @@ export async function claudeRemote(opts: {
 
     // Dynamic parameters
     nextMessage: () => Promise<{ message: MessageParam['content'], mode: EnhancedMode } | null>,
-    onReady: () => void,
+    onReady: (status?: 'failed') => void | Promise<void>,
     isAborted: (toolCallId: string) => boolean,
 
     // Callbacks
@@ -124,7 +126,7 @@ export async function claudeRemote(opts: {
         if (opts.onSessionReset) {
             opts.onSessionReset();
         }
-        opts.onReady();
+        await opts.onReady();
         return;
     }
 
@@ -144,6 +146,7 @@ export async function claudeRemote(opts: {
         cwd: opts.path,
         resume: startFrom ?? undefined,
         mcpServers: opts.mcpServers,
+        plugins: pluginsFromArgs(opts.claudeArgs, opts.path),
         permissionMode: mapToClaudeMode(initial.mode.permissionMode),
         model: initial.mode.model,
         fallbackModel: initial.mode.fallbackModel,
@@ -157,6 +160,9 @@ export async function claudeRemote(opts: {
         settingsPath: opts.hookSettingsPath,
         pathToClaudeCodeExecutable: configuration.claudeExecutablePath,
     }
+
+    // Per-turn only: do not retain stale auth state after a user retries.
+    let providerAuthFailed = false;
 
     // Track thinking state
     let thinking = false;
@@ -277,6 +283,11 @@ export async function claudeRemote(opts: {
         logger.debug(`[claudeRemote] Starting to iterate over response`);
 
         for await (const message of response) {
+            const authMessage = claudeProviderAuthMessage(message);
+            if (authMessage && !providerAuthFailed) {
+                providerAuthFailed = true;
+                opts.onCompletionEvent?.(authMessage);
+            }
             logger.debugLargeJson(`[claudeRemote] Message ${message.type}`, message);
 
             // Handle messages. During /compact, Claude emits the generated
@@ -354,14 +365,19 @@ export async function claudeRemote(opts: {
                 // Send completion messages
                 if (isCompactCommand) {
                     logger.debug('[claudeRemote] Compaction completed');
-                    if (opts.onCompletionEvent) {
+                    if (opts.onCompletionEvent && !providerAuthFailed) {
                         opts.onCompletionEvent('Compaction completed');
                     }
                     isCompactCommand = false;
                 }
 
                 // Send ready event
-                opts.onReady();
+                if (providerAuthFailed) {
+                    await opts.onReady('failed');
+                } else {
+                    await opts.onReady();
+                }
+                providerAuthFailed = false;
 
                 // Wait for next user message without blocking the message loop.
                 // Background task messages (task_started, task_progress, task_notification)

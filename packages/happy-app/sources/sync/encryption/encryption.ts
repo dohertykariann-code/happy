@@ -22,27 +22,33 @@ export class Encryption {
         // Derive anonymous ID
         const anonID = encodeHex((await deriveKey(masterSecret, 'Happy Coder', ['analytics', 'id']))).slice(0, 16).toLowerCase();
 
+        // Derive the key that hashes provider account ids for analytics
+        const providerAccountKey = await deriveKey(masterSecret, 'Happy Coder', ['analytics', 'provider-account']);
+
         // Derive master blob key for legacy sessions (those with no per-session dataKey)
         const masterBlobKey = await deriveKey(masterSecret, 'Happy Blobs', ['master']);
 
         // Create encryption
-        return new Encryption(anonID, masterSecret, contentKeyPair, masterBlobKey);
+        return new Encryption(anonID, providerAccountKey, masterSecret, contentKeyPair, masterBlobKey);
     }
 
     private readonly legacyEncryption: SecretBoxEncryption;
     private readonly contentKeyPair: sodium.KeyPair;
     private readonly masterBlobKey: Uint8Array;
     readonly anonID: string;
+    readonly providerAccountKey: Uint8Array;
     readonly contentDataKey: Uint8Array;
 
     // Session and machine encryption management
     private sessionEncryptions = new Map<string, SessionEncryption>();
     private machineEncryptions = new Map<string, MachineEncryption>();
     private sessionBlobKeys = new Map<string, Uint8Array>();
+    private sessionDataKeys = new Map<string, Uint8Array>();
     private cache: EncryptionCache;
 
-    private constructor(anonID: string, masterSecret: Uint8Array, contentKeyPair: sodium.KeyPair, masterBlobKey: Uint8Array) {
+    private constructor(anonID: string, providerAccountKey: Uint8Array, masterSecret: Uint8Array, contentKeyPair: sodium.KeyPair, masterBlobKey: Uint8Array) {
         this.anonID = anonID;
+        this.providerAccountKey = providerAccountKey;
         this.contentKeyPair = contentKeyPair;
         this.legacyEncryption = new SecretBoxEncryption(masterSecret);
         this.masterBlobKey = masterBlobKey;
@@ -95,6 +101,13 @@ export class Encryption {
                 ? await deriveKey(dataKey, 'Happy Blobs', ['session'])
                 : this.masterBlobKey;
             this.sessionBlobKeys.set(sessionId, blobKey);
+
+            // The raw per-session data key is kept so it can be handed to the
+            // machine that owns the session when resuming it (see
+            // machineResumeSession): the daemon has no way to derive it.
+            if (dataKey) {
+                this.sessionDataKeys.set(sessionId, dataKey);
+            }
         }
     }
 
@@ -112,8 +125,18 @@ export class Encryption {
     removeSessionEncryption(sessionId: string): void {
         this.sessionEncryptions.delete(sessionId);
         this.sessionBlobKeys.delete(sessionId);
+        this.sessionDataKeys.delete(sessionId);
         // Also clear any cached data for this session
         this.cache.clearSessionCache(sessionId);
+    }
+
+    /**
+     * Raw per-session AES key. Only present for sessions that carry their own
+     * dataEncryptionKey; legacy sessions encrypt with the account master
+     * secret, which must never leave the client.
+     */
+    getSessionDataKey(sessionId: string): Uint8Array | null {
+        return this.sessionDataKeys.get(sessionId) ?? null;
     }
 
     /**

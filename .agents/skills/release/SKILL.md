@@ -12,6 +12,72 @@ description: >
 
 You are the release operator for the Happy monorepo. When invoked, walk the user through releasing the component they choose.
 
+## Step 0: Where you release from (never skipped)
+
+**Every release runs from a local `main` that is exactly `origin/main`, checked
+against a fetch made right then.** Not from a worktree. Not from a branch. Not
+from a `main` that is ahead by an unpushed commit or behind by anyone else's.
+Not with uncommitted changes. This applies to every target below: preview OTA,
+production OTA, native builds, store submissions, CLI dispatch.
+
+Why this is rule zero. On 2026-09-20 a preview OTA was published from a
+worktree commit (`fe7de0a1`) that had branched off `main` hours earlier. The
+commit was fine on its own, and it was later rebased and pushed, so git looked
+right afterwards. But expo-updates serves whatever was published *last* on a
+branch, not whatever is on `main`. For the next several hours every phone on
+the preview channel ran a bundle missing four fixes that `main` already had:
+bot faces, the truncated "Auto" chip, paste-from-clipboard, and the send button
+being pushed out of the composer. Nothing errored. The user saw "the same old
+issue" and could not tell why. A release from a stale checkout is not a
+release, it is a rollback that nobody asked for.
+
+Run this and read the output before any release command:
+
+```bash
+git checkout main
+git fetch origin main
+git rev-parse --abbrev-ref HEAD            # must print exactly: main
+git rev-parse HEAD origin/main             # the two hashes must be identical
+git status --porcelain                     # must print nothing
+```
+
+If `HEAD` is behind, `git merge --ff-only origin/main`. If it is ahead, the
+commits are not on `main` yet — push first (see `AGENTS.md` "Sync To Main"),
+then release. If the tree is dirty, commit or stash; a release must be
+reproducible from the commit EAS records.
+
+The mobile release scripts enforce this mechanically:
+`packages/happy-app/sources/scripts/releasePreflight.mjs` runs first in `ota`,
+`ota:production`, `release:build:appstore`, and the other `release:build:*`
+scripts. It fetches, compares `HEAD` to `origin/main`, checks the tree is
+clean, regenerates `changelog.json` and insists it is committed, and refuses
+with the list of `main` commits the release would have dropped. If you run
+`eas update` or `eas build` by hand instead of through those scripts, run the
+preflight by hand first:
+
+```bash
+cd packages/happy-app && node sources/scripts/releasePreflight.mjs
+```
+
+**The only exception is one the user asks for by name, in the current
+conversation** — for example "publish this branch to preview so I can test
+it on my phone". A standing instruction from an earlier session does not
+count, and neither does your own judgement that it is probably fine. When the
+user does ask: fetch and rebase anyway, show them `git log --oneline
+HEAD..origin/main` (what the release will *not* contain), get a yes, run with
+`HAPPY_RELEASE_ALLOW_OFF_MAIN=1`, and say in the final report that the release
+was off-main and from which commit. Afterwards, once the work lands on `main`,
+republish from `main` so the channel is back on the mainline.
+
+After publishing an OTA, verify the channel now serves what you meant:
+
+```bash
+cd packages/happy-app && eas update:list --branch <branch> --limit 1 --non-interactive
+```
+
+The newest group's commit must be your `HEAD`. If it is not, someone published
+after you; find out from what.
+
 ## Step 1: Pick a target
 
 Ask which component to release:
@@ -32,6 +98,14 @@ Present these as options. Wait for the user to pick.
     npm name:    happy
     Registry:    https://registry.npmjs.org
     Git tags:    cli-{version}
+
+CLI releases use `.github/workflows/release-happy-cli.yml`, following the
+`happy-agent` manual-dispatch convention: one run builds/tests/packs, then
+publishes that exact artifact through npm trusted publishing. Never publish
+from local npm credentials or create a release tag by hand. The workflow creates
+the tag and GitHub Release only after npm publication and a fresh-install smoke
+check succeed. Steps 4–6 below describe the workflow's build gates, not a second
+local release procedure.
 
 Tag namespace note:
 - CLI releases use `cli-X.Y.Z`
@@ -69,7 +143,9 @@ Present as options. Wait for confirmation.
 
 ### Step 4: Version bump
 
-Edit `packages/happy-cli/package.json` directly — do NOT use `npm version` (it chokes on pnpm workspace protocol).
+The workflow stamps its requested version into `packages/happy-cli/package.json`
+before building. Do NOT use `npm version` (it chokes on pnpm workspace protocol).
+Beta identities stay in the artifact; stable releases persist the version on main.
 
 IMPORTANT: do this **before** build/test for the CLI. The build imports `package.json` and bakes the version into the generated bundle. If you build first and bump later, `happy --version` can still report the old prerelease version even though npm metadata shows the new one.
 
@@ -84,8 +160,8 @@ switch:
 
 - in `dependencies` → pkgroll emits a bare `import ... from '@slopus/happy-wire'`
   and Node resolves it from the registry at runtime
-- in `devDependencies` → pkgroll inlines the code into `dist/`, and the dep
-  vanishes from the published `package.json` entirely
+- in `devDependencies` → pkgroll inlines the code into `dist/`. The dev dependency
+  may remain in the published manifest, but is not installed as a runtime dependency.
 
 It must stay in `devDependencies`. After any build change, verify:
 
@@ -113,7 +189,7 @@ symbol. `workspace:*` publishes the local version NUMBER, never the local CODE.
 **No in-repo test can catch that class of bug.** Inside the monorepo
 `workspace:*` resolves to local source, so `prepublishOnly` — build, typecheck,
 all 792 unit tests — always sees the correct code. It only fails against the
-registry. The global-install smoke check in Step 11 is the ONLY gate.
+registry. The isolated install smoke check is what catches that class of bug.
 
 **Still exposed — `happy-agent` and `happy-server-self-host`** both keep
 happy-wire in `dependencies`, so they carry the original trap. Before publishing
@@ -194,72 +270,37 @@ Report results. If failures, ask the user whether to proceed or abort.
 
 ### Step 7: Publish
 
-#### Mandatory human handoff for npm authentication
-
-The agent MUST NOT run the actual npm publish command. npm authentication is
-interactive for this package: the maintainer must authenticate first and may be
-asked to authenticate again in the browser or provide an OTP during publish.
-After the version bump, build, bundle checks, tests, and final confirmation are
-complete, stop and hand the maintainer these exact commands to run in their own
-terminal:
+Fetch/rebase onto current main before dispatching. Build user-facing release notes
+from the actual changes since the previous CLI release of that channel (for a
+first beta of a new stable target, start from the latest stable). Keep notes under
+`.context/`. Show the chosen version, channel, and notes and get confirmation.
 
 ```bash
-cd packages/happy-cli
-npm login
-pnpm publish --tag {channel} --no-git-checks
+gh workflow run release-happy-cli.yml --repo slopus/happy --ref main \
+  -f version=X.Y.Z-beta.N -F prerelease=true \
+  -F release_notes=@.context/release-notes.md
 ```
 
-Never ask the maintainer to paste an npm password, token, browser link, or OTP
-into chat. Wait for them to report that the command completed, then independently
-verify the registry in Step 8 before committing/tagging the release. If a publish
-was started by the agent before the handoff requirement became known, stop it and
-check `npm view happy@{version} version` before doing anything else.
+Stable releases use `version=X.Y.Z` and `prerelease=false`. The workflow derives
+the npm dist-tag (`beta` or `latest`) and rejects mismatched versions. Do not
+introduce a separate prepare/publish dispatch. `-F release_notes=@...` reads file
+contents; `-f release_notes=...` sends a literal path, which is wrong.
 
-- `--no-git-checks`: allows dirty working tree (we already verified state)
+The workflow runs `prepublishOnly` explicitly **after version stamping and before
+`pnpm pack`**. Packing or publishing an existing tarball does not invoke the source
+workspace's `prepublishOnly`. Never omit this build/typecheck/unit-test gate.
+`1.1.10-beta.9` previously shipped a stale `beta.8` bundle when scripts were skipped.
 
-⚠️ **NEVER pass `--ignore-scripts`.** `prepublishOnly` runs `pnpm test` (build +
-unit tests), and **the build re-stamps the version into the bundle** (Step 4).
-Skipping it ships whatever stale `dist/` happens to be on disk. Two rationalizations
-look reasonable and are both WRONG:
+Use pnpm for workspace packaging. Uploading the already-tested pnpm tarball with
+a pinned npm CLI is supported and matches Happy Terminal's CI. Do not run raw
+`npm publish` against the source workspace. npm 11.5.1+ supports OIDC; the workflow
+pins and directly invokes npm 11.18.0 so Node's bundled npm cannot shadow it.
 
-- *"We already built + tested this session, so the scripts are redundant — skip them
-  to go faster."* That earlier build may predate the version bump (or a dependency
-  change). The on-disk `dist/` is then stamped with the OLD version, and
-  `--ignore-scripts` ships it. **This actually happened: `1.1.10-beta.9` was published
-  with `--ignore-scripts` and shipped a bundle stamped `beta.8`** — `happy --version`
-  reported `beta.8` while npm metadata said `beta.9`. npm versions are immutable, so
-  the only fix was bumping to `beta.10` and re-releasing. A wasted version number and
-  a broken publish, to save one ~1-minute rebuild.
-- *"It makes the TLS-failure retries faster."* The `prepublishOnly` rebuild on each
-  retry is the price of correctness, not overhead to trim. If retries are painful,
-  change the network (see the TLS note above) — do NOT skip scripts.
-
-If you catch yourself reasoning toward `--ignore-scripts`, stop: there is no case in
-this repo where it is correct for a publish.
-
-**MUST use `pnpm publish` — never `npm publish`.** This is a pnpm workspace; `npm
-publish` mis-resolves the workspace protocol and the `bin` entries and ships a
-broken tarball (a regression was reported for exactly this and the fix was to
-standardize on `pnpm publish`). `pnpm publish` is the only supported path. Do not
-"fall back" to `npm publish` if pnpm errors — diagnose the pnpm error instead.
-
-**Transient TLS upload failures are expected — retry, don't panic.** The tarball
-is large (~160 MB, ~1000 files). The upload to `registry.npmjs.org` frequently
-dies mid-stream with:
-
-```
-npm error code ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC
-npm error ... ssl3_read_bytes:ssl/tls alert bad record mac ...
-```
-
-This is network-layer corruption of a single TLS record on the long upload, **not**
-a code, auth, or version problem. A single bad record kills the whole stream, so
-each fresh attempt has an independent chance to complete. Verify that the version
-did NOT land (see Step 8), then ask the maintainer to re-run the same `pnpm publish`
-command in their terminal; it typically succeeds within 2–3 attempts (it took 3
-on the 1.1.10-beta.4 release). npm rejects re-publishing an already-published
-version, which would be a misleading error. A clean success prints
-`+ happy@X.Y.Z`.
+One-time trust configuration on npm: GitHub owner `slopus`, repository `happy`,
+workflow `release-happy-cli.yml`, environment `npm`, direct publishing allowed.
+The GitHub environment permits only main. Never request npm passwords, tokens,
+browser authentication links, or OTPs in chat, and never fall back to local npm
+credentials if OIDC fails.
 
 ### Step 8: Verify
 
@@ -268,57 +309,41 @@ npm view happy@{version} version   # did the version actually publish?
 npm view happy dist-tags           # did the channel tag move?
 ```
 
-Check `npm view happy@X.Y.Z version` first — it returns the version string if the
-publish landed (use this between TLS retries to avoid double-publishing, and to
-distinguish a real failure from a cosmetic upload error).
+Watch the dispatched run to completion using the product's durable wait/monitor
+mechanism and GitHub CLI status/logs. Check `npm view happy@X.Y.Z version` before
+retrying any failed publication: npm versions are immutable. A failed publish
+must leave the release tag and GitHub Release absent. If publication succeeded
+but a later gate failed, investigate before retrying; do not overwrite the version
+or move an existing tag.
 
 ⚠️ **This metadata check is necessary but NOT sufficient.** `npm view ... version`
 only confirms the tarball was *accepted* — it says nothing about what's *inside* it.
 A bundle stamped with the wrong version (the `--ignore-scripts` footgun above) passes
-this check cleanly. The authoritative check is the bundle itself in Step 11
-(`happy --version` after a real install). Never report a release as done on the
+this check cleanly. The authoritative check is the workflow's fresh-install
+smoke test (`happy --version`). Never report a release as done on the
 metadata check alone.
 
 Then confirm the new version appears under the correct dist-tag. The tag often
 lags the publish by 10–40s — poll a few times before concluding it failed; npm
 tag propagation is not instant.
 
-### Step 9: Git tag + commit (latest only)
-
-For `latest` releases only:
-1. Commit the version bump: `Release version X.Y.Z`
-2. Tag: `git tag cli-X.Y.Z`
-3. Push: `git push && git push --tags`
-
-For `beta` releases: ask the user if they want to commit the version bump or leave it uncommitted.
-
-If `git push` is rejected because `origin/main` advanced while releasing, fetch and rebase the release commit before retrying:
-```bash
-git fetch origin main
-git rebase --autostash origin/main
-git tag -f cli-X.Y.Z
-git push && git push --tags
-```
-
-Use `--autostash` when the worktree is dirty from unrelated local changes so those edits are preserved. Recreate the tag after rebase because the release commit hash changes.
-
-### Step 10: GitHub Release (latest only)
-
-For `latest` releases, create a GitHub release:
-```bash
-gh release create cli-X.Y.Z --generate-notes --title "cli-X.Y.Z"
-```
-
-### Step 11: Install + verify locally
+### Step 9: Read back the release and installed-package verification
 
 ```bash
-npm i -g happy@{channel}
-happy --version
-happy daemon status
+gh release view cli-X.Y.Z --repo slopus/happy --json body,tagName,isDraft,isPrerelease,url
 ```
 
-Report the installed version and daemon status.
-The smoke check must confirm that `happy --version` matches the published version, not just npm metadata. If it reports the old version, rebuild after the version bump and cut a corrective patch release.
+The body must contain the actual notes, not a filename. Betas must be prereleases,
+must update only npm's beta tag, and must leave GitHub's latest release unchanged.
+The CLI shares its repository with native/OTA releases, so even stable CLI releases
+do not automatically replace GitHub's latest release.
+
+The workflow checks the tarball SHA-256 after artifact download, compares the npm
+integrity and provenance metadata, then installs the published version in a fresh
+directory and checks `happy --version`, `happy --help`, and `happy daemon status`.
+Verify that these gates passed. Do not replace the maintainer's global CLI or
+restart their daemon as an implicit release step. After stable releases, fetch
+and fast-forward/rebase the workflow's version commit while preserving local work.
 
 ---
 
@@ -326,7 +351,11 @@ The smoke check must confirm that `happy --version` matches the published versio
 
     Package:     packages/happy-app
     Variants:    development, preview, production
-    Platform:    Expo SDK 54 / React Native 0.81.4
+    Platform:    Expo SDK 55 / React Native 0.83.1
+
+Step 0 first, always. Every command in this section is wrapped by
+`sources/scripts/releasePreflight.mjs`; if you bypass a `pnpm` script and call
+`eas` directly, run the preflight yourself.
 
 ### Build types
 
@@ -341,18 +370,30 @@ options in order of popularity:
 #### OTA Updates
 
   ```bash
-  # Preview (most common)
-  pnpm --filter happy-app run ota
+  # Preview (most common). pnpm forwards the trailing flags to `eas update`.
+  cd packages/happy-app && pnpm ota --message "<what changed> (<short sha>)" --non-interactive
 
   # Production
-  pnpm --filter happy-app run ota:production
+  cd packages/happy-app && pnpm ota:production
   ```
 
-OTA scripts require a message — stdin is not readable from Claude Code, so run the
-underlying `eas update` directly with `--message`:
-  ```bash
-  cd packages/happy-app && APP_ENV=preview NODE_ENV=preview tsx sources/scripts/parseChangelog.ts && pnpm typecheck && eas update --branch preview --message "<message>"
-  ```
+`eas update` prompts for a message when none is given, and stdin is not
+readable from an agent, so always pass `--message` and `--non-interactive`.
+Put the short commit hash in the message: it is what lets the next person
+answer "what is actually on this channel" from `eas update:list` alone.
+
+The `ota` script is `releasePreflight.mjs && pnpm typecheck && eas update
+--branch preview`. The preflight regenerates `changelog.json` from
+`CHANGELOG.md` and refuses if the result is not committed, so edit the
+changelog, regenerate, commit, push, *then* release. Do not reach around the
+script to `eas update` directly just to skip a step it is failing on; the
+failure is the point.
+
+Production OTA (`ota:production`) dispatches the EAS workflow in
+`.eas/workflows/ota.yaml`, which publishes the current commit to the
+`production` channel. Same rule: `main`, matching `origin/main`, pushed. Never
+run it without the user asking for a production OTA in the current
+conversation.
 
 #### Native Builds
 
@@ -364,15 +405,21 @@ underlying `eas update` directly with `--message`:
 - **TestFlight / Play Store builds** — use `-store` profiles for distribution via TestFlight and Play Store.
   **Always pass `--auto-submit`** so the build goes straight to TestFlight after completion.
   ```bash
-  # Preview (TestFlight/internal testing)
-  cd packages/happy-app && eas build --profile preview-store --platform ios --non-interactive --auto-submit
+  # Production, both platforms, auto-submitted to App Store Connect and Play Console.
+  # This is `release-production.sh`, and it runs the preflight first.
+  cd packages/happy-app && pnpm release:build:appstore
+
+  # Preview (TestFlight/internal testing) — run the preflight yourself, then:
+  cd packages/happy-app && node sources/scripts/releasePreflight.mjs && eas build --profile preview-store --platform ios --non-interactive --auto-submit
 
   # Dev (TestFlight, points to dev server)
-  cd packages/happy-app && eas build --profile development-store --platform ios --non-interactive --auto-submit
-
-  # Production (App Store / Play Store submission)
-  cd packages/happy-app && eas build --profile production --platform ios --non-interactive --auto-submit
+  cd packages/happy-app && node sources/scripts/releasePreflight.mjs && eas build --profile development-store --platform ios --non-interactive --auto-submit
   ```
+
+  Afterwards, `eas build:list --limit 4 --non-interactive --json` and check
+  that each build's `gitCommitHash` is your `HEAD` and its `runtimeVersion`
+  is the one in `app.config.js`. A build from the wrong commit is the native
+  version of the stale-OTA mistake, and it is far harder to undo.
 
 **IMPORTANT:** Always pass `--non-interactive` to `eas build` commands. Without it,
 EAS prompts for Apple account login interactively which breaks in non-TTY contexts
@@ -400,7 +447,9 @@ the `-store` profiles above.
     preview              internal       preview
 
 Version source is remote (EAS manages build numbers, auto-incremented).
-Runtime version "20" — bump when native code changes to invalidate OTA.
+Runtime version is `runtimeVersion` in `app.config.js` (currently "21") — bump
+it when native code changes, so an OTA built against the new native layer can
+never land on an old binary.
 
 ### App Store Connect
 
@@ -440,7 +489,7 @@ Guide the user to trigger the TeamCity build, or help with manual Docker builds 
 
 Server releases go through TeamCity (`Lab_HappyServer`). The config is in the TeamCity UI, not in the repo.
 
-Build: node:20 + python3 + ffmpeg, builds happy-wire + happy-server.
+Build: node:24 + python3 + ffmpeg, builds happy-wire + happy-server.
 Secrets from Vault: handy-db, handy-master, handy-github, handy-files, handy-e2b, handy-revenuecat, handy-elevenlabs.
 Redis: happy-redis StatefulSet (redis:7-alpine, 1Gi persistent volume).
 
@@ -470,12 +519,13 @@ Separate repo, not part of this monorepo. Guide the user to push to that repo.
 
 ## Rules
 
+- **Release only from local `main` that is `origin/main`, fetched right then, tree clean** — see Step 0. Not a worktree, not a branch, not ahead, not behind. The mobile scripts refuse otherwise. The only exception is one the user asks for by name in the current conversation; then run with `HAPPY_RELEASE_ALLOW_OFF_MAIN=1`, show what `main` commits the release lacks, and say it was off-main in the report.
 - **Release notes: investigate with subagents, exclude default-off, ask when unsure** — see "Writing release notes" above.
 - **Always present options** — never assume which component, channel, or version.
 - **Always verify before publishing** — show the user what will be published and get confirmation.
-- **The maintainer runs npm login and pnpm publish interactively** — the agent prepares and verifies the release but never runs the publish command or handles npm credentials/OTP.
+- **CLI releases use the approved GitHub workflow** — dispatch from main with the confirmed version and notes; never publish from local credentials or handle npm credentials/OTP.
 - **Do not bundle self-host server/webapp into `happy`** — self-host runtime and the bundled webapp ship through `happy-server-self-host`, not the main CLI package.
 - **Unit tests are the gate, not integration tests** — integration tests are slow and have flaky abort/interrupt tests.
-- **Use pnpm publish, not npm publish** — avoids workspace protocol issues.
-- **Never use --ignore-scripts for package publishing** — prepublish scripts are the last guard before npm receives the tarball.
+- **Use pnpm to pack the workspace** — CI uploads that exact tested tarball with its pinned npm CLI; never use raw npm publishing on the source workspace.
+- **Run prepublishOnly after stamping and before packing** — tarball upload does not run the workspace's lifecycle scripts. Never skip this gate.
 - **Never force-push tags** — if a tag exists, stop and ask.

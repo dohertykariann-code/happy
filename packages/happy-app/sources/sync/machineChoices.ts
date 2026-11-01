@@ -163,6 +163,9 @@ export function machineChoiceAgentAvailable(
  *
  * Common harnesses stay visible but disabled when unavailable. Antigravity,
  * OpenHands, and Happy Agent stay absent until this computer reports them available.
+ * Every non-retired harness this computer can actually run, in picker order.
+ * An empty result is meaningful: the UI can offer setup help instead of
+ * advertising harnesses that cannot be started from the selected computer.
  */
 export function machineChoiceAgentVisible(
     choice: MachineChoice | null,
@@ -170,6 +173,12 @@ export function machineChoiceAgentVisible(
 ): boolean {
     return (agent !== 'agy' && agent !== 'rig' && agent !== 'openhands_local' && agent !== 'openhands_deepinfra')
         || machineChoiceAgentAvailable(choice, agent);
+}
+
+export function listMachineChoiceAvailableAgents(
+    choice: MachineChoice | null,
+): NewSessionAgentType[] {
+    return NEW_SESSION_AGENT_ORDER.filter((agent) => machineChoiceAgentAvailable(choice, agent));
 }
 
 /**
@@ -193,6 +202,28 @@ export function resolveChoiceAgent(
     }
     return NEW_SESSION_AGENT_ORDER.find((candidate) => machineChoiceAgentAvailable(choice, candidate))
         ?? agent;
+}
+
+/**
+ * The agent a new session on this computer starts with.
+ *
+ * The harness the person last picked in the composer (`picked`), whenever this computer can run
+ * it. Otherwise Happy, whenever the computer has Happy Agent, reachable right now or not. The
+ * draft's stored agent cannot be trusted to say otherwise: for nearly everyone it is Claude Code
+ * only because that was the default before they installed the desktop app. Otherwise whatever
+ * `resolveChoiceAgent` makes of the pick, or of the stored agent when nothing was picked.
+ *
+ * A pick this computer cannot run is passed over here, not forgotten: the caller keeps it, and it
+ * wins again on a computer that has it.
+ */
+export function resolveNewSessionAgent(
+    choice: MachineChoice | null,
+    agent: NewSessionAgentType,
+    picked: NewSessionAgentType | null,
+): NewSessionAgentType {
+    if (picked && machineChoiceAgentAvailable(choice, picked)) return resolveChoiceAgent(choice, picked);
+    if (machineChoiceAgentAvailable(choice, 'rig')) return 'rig';
+    return resolveChoiceAgent(choice, picked ?? agent);
 }
 
 /**

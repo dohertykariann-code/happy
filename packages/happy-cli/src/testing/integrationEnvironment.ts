@@ -4,7 +4,7 @@ import { mkdirSync } from 'node:fs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..', '..', '..', '..');
-const ENVIRONMENTS_MODULE_URL = pathToFileURL(join(REPO_ROOT, 'environments', 'environments.ts')).href;
+const ENVIRONMENTS_MODULE_URL = pathToFileURL(join(REPO_ROOT, 'packages', 'dev-environments', 'environments.ts')).href;
 
 export type EnvironmentTemplate = 'authenticated-empty' | 'empty';
 

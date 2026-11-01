@@ -12,7 +12,11 @@ import { deriveKey } from '@/utils/deriveKey';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers';
 import { calculateCost } from '@/utils/pricing';
-import { shouldReconnect } from '@/utils/lidState';
+import {
+    releaseReconnectCapabilityMonitor,
+    retainReconnectCapabilityMonitor,
+    shouldReconnect,
+} from '@/utils/lidState';
 import { createEnvelope, type CreateEnvelopeOptions, type SessionEnvelope, type SessionTurnEndStatus } from '@slopus/happy-wire';
 import {
     closeClaudeTurnWithStatus,
@@ -211,6 +215,8 @@ export class ApiSessionClient extends EventEmitter {
     private encryptionKey: Uint8Array;
     private encryptionVariant: 'legacy' | 'dataKey';
     private reconnectInterval: NodeJS.Timeout | null = null;
+    private reconnectTimeout: NodeJS.Timeout | null = null;
+    private closed = false;
     private ignoreArchiveSignal = false;
     private skipInitialMessages = false;
     private claudeSessionProtocolState: ClaudeSessionProtocolState = {
@@ -241,6 +247,7 @@ export class ApiSessionClient extends EventEmitter {
     private pendingOutbox: Array<{ content: string; localId: string }> = [];
     private readonly sendSync: InvalidateSync;
     private readonly receiveSync: InvalidateSync;
+    private reconnectCapabilityHeld = false;
 
     constructor(token: string, session: Session) {
         super()
@@ -287,11 +294,12 @@ export class ApiSessionClient extends EventEmitter {
         //
 
         this.socket.on('connect', () => {
-            logger.debug('Socket connected successfully');
-            if (this.reconnectInterval) {
-                clearInterval(this.reconnectInterval);
-                this.reconnectInterval = null;
+            if (this.closed) {
+                this.socket.close();
+                return;
             }
+            logger.debug('Socket connected successfully');
+            this.clearReconnectTimers();
             this.rpcHandlerManager.onSocketConnect(this.socket);
             this.receiveSync.invalidate();
         })
@@ -304,12 +312,14 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.on('disconnect', (reason) => {
             logger.debug(`[API] Socket disconnected: ${reason}`);
             this.rpcHandlerManager.onSocketDisconnect();
+            if (this.closed) return;
             this.startSmartReconnect();
         })
 
         this.socket.on('connect_error', (error) => {
             logger.debug('[API] Socket connection error:', error);
             this.rpcHandlerManager.onSocketDisconnect();
+            if (this.closed) return;
             this.startSmartReconnect();
         })
 
@@ -381,6 +391,8 @@ export class ApiSessionClient extends EventEmitter {
         // Connect (after short delay to give a time to add handlers)
         //
 
+        retainReconnectCapabilityMonitor();
+        this.reconnectCapabilityHeld = true;
         this.socket.connect();
     }
 
@@ -1044,23 +1056,25 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     async close() {
+        if (this.closed) return;
+        this.closed = true;
         logger.debug('[API] socket.close() called');
         this.sendSync.stop();
         this.receiveSync.stop();
-        if (this.reconnectInterval) {
-            clearInterval(this.reconnectInterval);
-            this.reconnectInterval = null;
-        }
+        this.clearReconnectTimers();
         this.socket.close();
+        if (this.reconnectCapabilityHeld) {
+            releaseReconnectCapabilityMonitor();
+            this.reconnectCapabilityHeld = false;
+        }
     }
 
     private startSmartReconnect() {
-        if (this.reconnectInterval) return;
+        if (this.closed || this.reconnectInterval) return;
 
         this.reconnectInterval = setInterval(() => {
-            if (this.socket.connected) {
-                clearInterval(this.reconnectInterval!);
-                this.reconnectInterval = null;
+            if (this.closed || this.socket.connected) {
+                this.clearReconnectTimers();
                 return;
             }
             if (!shouldReconnect()) {
@@ -1072,8 +1086,22 @@ export class ApiSessionClient extends EventEmitter {
         }, 3000);
 
         if (shouldReconnect()) {
-            logger.debug('[API] Network up + lid open — reconnecting in 1s');
-            setTimeout(() => { if (!this.socket.connected) this.socket.connect() }, 1000);
+            logger.debug('[API] Network available — reconnecting in 1s');
+            this.reconnectTimeout = setTimeout(() => {
+                this.reconnectTimeout = null;
+                if (!this.closed && !this.socket.connected && shouldReconnect()) this.socket.connect();
+            }, 1000);
+        }
+    }
+
+    private clearReconnectTimers() {
+        if (this.reconnectInterval) {
+            clearInterval(this.reconnectInterval);
+            this.reconnectInterval = null;
+        }
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
         }
     }
 }

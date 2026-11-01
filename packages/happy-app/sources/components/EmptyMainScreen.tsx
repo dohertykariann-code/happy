@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Platform, Pressable } from 'react-native';
+import { View, Text, Platform, Pressable, Linking, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/RoundButton';
@@ -9,7 +9,6 @@ import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useAllMachines } from '@/sync/storage';
 import { collectMachineChoices } from '@/sync/machineChoices';
-import { useOfflineMachineTroubleshooting } from '@/hooks/useOfflineMachineTroubleshooting';
 import { useRouter } from 'expo-router';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -153,10 +152,9 @@ export function EmptyMainScreen({
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
+    const [showManualSetup, setShowManualSetup] = React.useState(false);
     const machines = useAllMachines({ includeOffline: true });
     const machineChoices = React.useMemo(() => collectMachineChoices(machines), [machines]);
-    const hasOnlineMachines = machineChoices.some((machine) => machine.online);
-    const troubleshoot = useOfflineMachineTroubleshooting(machineChoices);
     const showArchivedAction = hasArchivedSessions && onShowArchived ? (
         <Pressable
             onPress={onShowArchived}
@@ -185,50 +183,55 @@ export function EmptyMainScreen({
         }
     }, [connectWithUrl]);
 
+    // A linked computer with nothing on it yet. The all-offline case never
+    // reaches here: the list wrapper shows the offline checklist for it.
     if (machineChoices.length > 0) {
-        if (hasOnlineMachines) {
-            return (
-                <View style={styles.container}>
-                    <Ionicons name="terminal-outline" size={56} color={theme.colors.textSecondary} style={styles.stateIcon} />
-                    <Text style={styles.stateTitle}>No sessions yet</Text>
-                    <Text style={styles.stateDescription}>Start one on a connected machine.</Text>
-                    <RoundButton title="Start New Session" size="large" onPress={() => router.navigate('/new')} />
-                    {showArchivedAction}
-                </View>
-            );
-        }
-
-        const title = machineChoices.length === 1
-            ? `${machineChoices[0].name} is unreachable`
-            : 'No machines are reachable';
         return (
             <View style={styles.container}>
-                <Ionicons name="cloud-offline-outline" size={56} color={theme.colors.textSecondary} style={styles.stateIcon} />
-                <Text style={styles.stateTitle}>{title}</Text>
-                <Text style={styles.stateDescription}>Bring a machine online to start a session.</Text>
-                <RoundButton title="Troubleshoot" size="large" onPress={troubleshoot} />
+                <Ionicons name="terminal-outline" size={56} color={theme.colors.textSecondary} style={styles.stateIcon} />
+                <Text style={styles.stateTitle}>No sessions yet</Text>
+                <Text style={styles.stateDescription}>Start one on a connected machine.</Text>
+                <RoundButton title="Start New Session" size="large" onPress={() => router.navigate('/new')} />
                 {showArchivedAction}
             </View>
         );
     }
 
     return (
-        <View style={styles.container}>
-            {/* Terminal-style code block */}
-            <Text style={styles.title}>{t('components.emptyMainScreen.readyToCode')}</Text>
-            <View style={styles.terminalBlock}>
+        <ScrollView contentContainerStyle={[styles.container, { flexGrow: 1, flex: undefined, paddingVertical: 24 }]}>
+            <Text style={styles.title}>{t('components.emptyMainScreen.connectComputer')}</Text>
+            <Text style={styles.stateDescription}>
+                {t('components.emptyMainScreen.desktopSetupInstructions')}
+                {'\n\n'}{t('components.emptyMainScreen.harnessDescription')}
+            </Text>
+            <RoundButton
+                title={t('components.emptyMainScreen.getDesktop')}
+                action={async () => { await Linking.openURL('https://happy.engineering'); }}
+            />
+            <Pressable
+                onPress={() => setShowManualSetup(value => !value)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: showManualSetup }}
+                style={styles.secondaryAction}
+            >
+                <Text style={styles.secondaryActionText}>{t('components.emptyMainScreen.terminalAlternative')}</Text>
+            </Pressable>
+            {showManualSetup && <View style={styles.terminalBlock}>
                 <Text style={[styles.terminalText, styles.terminalTextFirst]}>
                     $ npm i -g happy
                 </Text>
-                <Text style={styles.terminalText}>
-                    $ happy
+                <Text style={[styles.terminalText, styles.terminalTextFirst]}>
+                    $ happy claude
                 </Text>
-            </View>
+                <Text style={styles.terminalText}>
+                    $ happy codex
+                </Text>
+            </View>}
 
 
             {Platform.OS !== 'web' && (
                 <>
-                    <View style={styles.stepsContainer}>
+                    {showManualSetup && <View style={styles.stepsContainer}>
                         <View style={styles.stepRow}>
                             <View style={styles.stepNumber}>
                                 <Text style={styles.stepNumberText}>1</Text>
@@ -253,7 +256,7 @@ export function EmptyMainScreen({
                                 {t('components.emptyMainScreen.scanQrCode')}
                             </Text>
                         </View>
-                    </View>
+                    </View>}
                     <View style={styles.buttonsContainer}>
                         <View style={styles.buttonWrapper}>
                             <RoundButton
@@ -281,6 +284,6 @@ export function EmptyMainScreen({
                 </>
             )}
             {showArchivedAction}
-        </View>
+        </ScrollView>
     );
 }

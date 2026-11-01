@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window chrome only. Everything inside the window is Compose (ui/theme). -->
+    <style name="Theme.Happy" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <!-- The QR scanner is dark whatever the app's theme, so it opens black, not white. -->
+    <style name="Theme.Happy.Scanner">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

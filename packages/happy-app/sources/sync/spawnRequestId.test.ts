@@ -9,13 +9,16 @@ vi.mock('expo-crypto', () => ({
 import {
     buildSpawnRequestSignature,
     completeSpawnRequest,
+    getSpawnedSessionId,
+    rememberSpawnedSession,
+    releaseSpawnedSession,
     resolveSpawnRequestId,
 } from './spawnRequestId';
 
 const baseInput = {
     machineId: 'machine-1',
     agent: 'rig',
-    directory: '~/project',
+    place: '~/project',
     worktree: '__none__',
     modelKey: 'codex/gpt-5.6-sol',
     permissionMode: 'auto',
@@ -52,7 +55,66 @@ describe('spawn request id', () => {
         }))).toBe('request-2');
         expect(resolveSpawnRequestId(buildSpawnRequestSignature({
             ...baseInput,
-            directory: '~/other',
+            place: '~/other',
         }))).toBe('request-3');
+    });
+
+    it('retains a created session for the same attempt, and abandons it only on configuration change', () => {
+        const id = resolveSpawnRequestId(buildSpawnRequestSignature(baseInput));
+        const abandon = vi.fn();
+        rememberSpawnedSession(id, 'created-session', abandon);
+        expect(resolveSpawnRequestId(buildSpawnRequestSignature(baseInput))).toBe(id);
+        expect(getSpawnedSessionId(id)).toBe('created-session');
+        expect(abandon).not.toHaveBeenCalled();
+        const replacement = resolveSpawnRequestId(buildSpawnRequestSignature({ ...baseInput, machineId: 'other' }));
+        expect(abandon).toHaveBeenCalledOnce();
+        expect(getSpawnedSessionId(replacement)).toBeUndefined();
+        completeSpawnRequest(id); // Late completion cannot erase the newer attempt.
+        expect(resolveSpawnRequestId(buildSpawnRequestSignature({ ...baseInput, machineId: 'other' }))).toBe(replacement);
+    });
+
+    it('never abandons an accepted session when the next request changes', () => {
+        const id = resolveSpawnRequestId(buildSpawnRequestSignature(baseInput));
+        const abandon = vi.fn();
+        rememberSpawnedSession(id, 'accepted-session', abandon);
+        completeSpawnRequest(id);
+        resolveSpawnRequestId(buildSpawnRequestSignature({ ...baseInput, place: '~/different' }));
+        expect(abandon).not.toHaveBeenCalled();
+    });
+
+    it('never stops a retained session the user has adopted from the session list', () => {
+        const id = resolveSpawnRequestId(buildSpawnRequestSignature(baseInput));
+        const abandon = vi.fn();
+        rememberSpawnedSession(id, 'adopted-session', abandon);
+        releaseSpawnedSession('adopted-session');
+        resolveSpawnRequestId(buildSpawnRequestSignature({ ...baseInput, place: '~/different' }));
+        expect(abandon).not.toHaveBeenCalled();
+    });
+});
+
+describe('spawn request id for a bot', () => {
+    beforeEach(() => {
+        mocks.uuidCount = 0;
+        completeSpawnRequest();
+    });
+
+    it('mints a new key when the bot changes name or face, and keeps it otherwise', () => {
+        const bot = { name: 'Release Captain', faceSeed: 'abc12345' };
+        const first = resolveSpawnRequestId(buildSpawnRequestSignature({ ...baseInput, bot }));
+        expect(resolveSpawnRequestId(buildSpawnRequestSignature({ ...baseInput, bot: { ...bot } }))).toBe(first);
+        expect(resolveSpawnRequestId(buildSpawnRequestSignature({
+            ...baseInput,
+            bot: { ...bot, name: 'Release Cap' },
+        }))).not.toBe(first);
+        expect(resolveSpawnRequestId(buildSpawnRequestSignature({
+            ...baseInput,
+            bot: { ...bot, faceSeed: 'zzz99999' },
+        }))).not.toBe(first);
+    });
+
+    it('is a different request from the session in the same place', () => {
+        const session = buildSpawnRequestSignature({ ...baseInput, bot: null });
+        const bot = buildSpawnRequestSignature({ ...baseInput, bot: { name: 'Bot', faceSeed: 'abc12345' } });
+        expect(session).not.toBe(bot);
     });
 });

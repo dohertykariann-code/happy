@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { useAllMachines, useSessions, useSetting } from '@/sync/storage';
-import { getCodeAgentDefaults, resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import { storage, useAllMachines, useSetting } from '@/sync/storage';
+import { getCodeAgentDefaults, resolveAgentDefaultConfig, retireModelMode } from '@/sync/agentDefaults';
 import {
     machineSpawnNewSession,
     machineStopSession,
     sessionArchive,
     sessionKill,
     sessionSetAgentModes,
+    sessionSetAvatar,
 } from '@/sync/ops';
 import { sync } from '@/sync/sync';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
@@ -28,7 +29,7 @@ import {
     collectMachineChoices,
     findMachineChoice,
     resolveAgentMachine,
-    resolveChoiceAgent,
+    resolveNewSessionAgent,
     resolveWorktreeCreationMachine,
 } from '@/sync/machineChoices';
 import { delay } from '@/utils/time';
@@ -40,14 +41,67 @@ import {
 import {
     buildSpawnRequestSignature,
     completeSpawnRequest,
+    getSpawnedSessionId,
+    rememberSpawnedSession,
     resolveSpawnRequestId,
 } from '@/sync/spawnRequestId';
 import type { NewSessionStartPhase } from '@/components/newSessionProgress';
 import type { Session } from '@/sync/storageTypes';
-import { collectSessionPlaces, collectSessionWorkspaces } from '@/sync/agentSessionPlaces';
-import { resolveHappyAgentSpawnTarget } from '@/sync/happyAgentSpawn';
+import type { AttachmentPreview } from '@/sync/attachmentTypes';
+import type { NewSessionAgentType, NewSessionSessionType } from '@/sync/persistence';
+import type { PermissionModeKey } from '@/components/PermissionModeSelector';
+import { collectSessionPlaces, collectSessionWorkspaces, projectPlaceKey } from '@/sync/agentSessionPlaces';
+import { resolveHappyAgentSpawnTarget, type HappyAgentSpawnTarget } from '@/sync/happyAgentSpawn';
+import { paintBotFace } from '@/utils/botFacePaint';
+import { describeBotNameProblem } from '@/utils/botName';
+import {
+    getAttachmentDiagnostic,
+    formatAttachmentDiagnosticForLog,
+    type AttachmentDiagnostic,
+} from '@/sync/attachmentDiagnostics';
 
 const MAX_RIG_PENDING_RESULTS = 3;
+
+/**
+ * What to start instead of what the composer's draft says.
+ *
+ * A session can be started from places that have no composer — the tab strip's
+ * `+`, for one — where the target is already known and the persisted draft is
+ * somebody else's. Overrides are read in place of the draft for this one start
+ * and never written back to it.
+ */
+export interface StartSessionOverrides {
+    selectedMachineId?: string | null;
+    selectedPath?: string | null;
+    /**
+     * The catalog project to start in, for a project with no folder of its own. Naming a directory
+     * above clears whatever project the draft held, so a caller never has to state both.
+     */
+    selectedProjectId?: string | null;
+    agentType?: NewSessionAgentType;
+    permissionMode?: PermissionModeKey | null;
+    modelMode?: string | null;
+    effortLevel?: string | null;
+    sessionType?: NewSessionSessionType;
+    worktreeKey?: string | null;
+    input?: string;
+    attachments?: AttachmentPreview[];
+    /**
+     * The Happy Agent catalog destination, when the caller already knows it.
+     * The draft can only name a directory, which is then matched back to a
+     * project and a workspace; a caller starting from an existing session holds
+     * those identities already, and passing them avoids the path round-trip
+     * that would otherwise import a known workspace as a second project.
+     * Ignored unless the agent is Happy Agent; `null` forces a plain directory.
+     */
+    happyAgentTarget?: HappyAgentSpawnTarget | null;
+    /**
+     * Where to go once the session exists. The default pushes the session
+     * screen, which is wrong for a caller already on one — the tab strip swaps
+     * the route's session in place instead.
+     */
+    openSession?: (sessionId: string) => void;
+}
 
 // Stop has to be felt at once. A request already on its way to the machine
 // cannot be recalled, and the machine may never answer it at all, so the flow
@@ -66,6 +120,8 @@ const CANCELED = Symbol('canceled');
  */
 type StartRun = {
     canceled: boolean;
+    controller: AbortController;
+    accepted: boolean;
     signal: Promise<typeof CANCELED>;
     cancel: () => void;
 };
@@ -75,13 +131,96 @@ function beginRun(): StartRun {
     const signal = new Promise<typeof CANCELED>((r) => { resolve = r; });
     const run: StartRun = {
         canceled: false,
+        controller: new AbortController(),
+        accepted: false,
         signal,
         cancel: () => {
             run.canceled = true;
+            run.controller.abort();
             resolve(CANCELED);
         },
     };
     return run;
+}
+
+/**
+ * Paints the chosen face and puts it on the bot behind a session that is
+ * already open on this phone. Reported rather than thrown: the bot exists by
+ * now, and the caller decides what a missing face means.
+ */
+type BotFaceLeg = 'painting the face' | 'uploading the face' | 'asking the bot to wear it';
+type BotFaceFailure = {
+    ok: false;
+    leg: BotFaceLeg | null;
+    error: string;
+    diagnostic: AttachmentDiagnostic | null;
+};
+
+async function wearBotFace(
+    sessionId: string,
+    seed: string,
+): Promise<{ ok: true } | BotFaceFailure> {
+    // Each leg is caught under its own name. The three do quite different
+    // things — draw, upload, ask — and a bare message like "undefined is not an
+    // object" says nothing about which of them was running when it was thrown.
+    let failedLeg: BotFaceLeg | null = null;
+    let diagnostic: AttachmentDiagnostic | null = null;
+    const leg = async <T,>(name: BotFaceLeg, step: () => Promise<T>): Promise<T> => {
+        try {
+            return await step();
+        } catch (error) {
+            failedLeg = name;
+            diagnostic = getAttachmentDiagnostic(error);
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(`${name}: ${message}`);
+        }
+    };
+    try {
+        const painting = await leg('painting the face', () => paintBotFace(seed));
+        const uploaded = await leg('uploading the face', () => (
+            sync.uploadSessionBlob(sessionId, 'face.png', painting.bytes)
+        ));
+        await leg('asking the bot to wear it', () => sessionSetAvatar(sessionId, {
+            ref: uploaded.ref,
+            size: uploaded.size,
+            mimeType: painting.mimeType,
+        }));
+        return { ok: true };
+    } catch (error) {
+        return { ok: false, leg: failedLeg, diagnostic, error: error instanceof Error ? error.message : String(error) };
+    }
+}
+
+/** Retry only the picture on the existing bot, keeping transport details in the log. */
+function offerBotFaceRetry(
+    sessionId: string,
+    seed: string,
+    botName: string,
+    failure: BotFaceFailure,
+): void {
+    if (failure.diagnostic) {
+        console.error('[bot] The face could not be put on the bot:', failure.error,
+            formatAttachmentDiagnosticForLog(failure.diagnostic));
+    } else {
+        console.error('[bot] The face could not be put on the bot:', failure.error);
+    }
+    Modal.alert(
+        'Picture not set',
+        failure.leg === 'uploading the face'
+            ? `${botName} is ready, but its picture couldn’t be uploaded. You can try again without creating another bot.`
+            : `${botName} is ready, but its picture couldn't be set. Try again.`,
+        [
+            { text: 'Not now', style: 'cancel' },
+            {
+                text: 'Try again',
+                onPress: () => {
+                    void wearBotFace(sessionId, seed).then((worn) => {
+                        if (!worn.ok) offerBotFaceRetry(sessionId, seed, botName, worn);
+                    });
+                },
+            },
+        ],
+    );
 }
 
 function resolveOption<T extends { key: string }>(
@@ -98,7 +237,6 @@ function resolveOption<T extends { key: string }>(
 
 export function useStartSessionFromDraft() {
     const machines = useAllMachines({ includeOffline: true });
-    const sessions = useSessions();
     const defaultOverrides = useSetting('agentDefaultOverrides');
     const navigateToSession = useNavigateToSession();
     // The composer stays on screen for the whole flow, so what it is waiting on
@@ -121,7 +259,7 @@ export function useStartSessionFromDraft() {
 
     const cancelStart = React.useCallback(() => {
         const run = activeRunRef.current;
-        if (!run) return;
+        if (!run || run.accepted) return;
         run.cancel();
         // Spent here, synchronously, and not when the canceled flow eventually
         // resumes. Stop hands the composer back on this same tick, so a new
@@ -138,23 +276,63 @@ export function useStartSessionFromDraft() {
         if (isMountedRef.current) setPhase(null);
     }, []);
 
-    const startSession = React.useCallback(async (): Promise<boolean> => {
+    const startSession = React.useCallback(async (overrides?: StartSessionOverrides): Promise<boolean> => {
         if (activeRunRef.current) return false;
 
-        const draft = useNewSessionDraft.getState();
+        const {
+            happyAgentTarget: targetOverride,
+            openSession,
+            ...draftOverrides
+        } = overrides ?? {};
+        const draftStore = useNewSessionDraft.getState();
+        // A snapshot for this attempt to read. What the flow clears at the end
+        // is the store as it stands then, and only when the prompt came from it.
+        const draft = {
+            ...draftStore,
+            // A caller that names a directory has named the place. Keeping the draft's project
+            // beside it would start the session in that project instead, which is somewhere the
+            // caller never asked for.
+            ...(draftOverrides.selectedPath !== undefined ? { selectedProjectId: null } : {}),
+            ...draftOverrides,
+        };
         // The draft names a computer, which may run both Happy CLI and Happy Agent. Which daemon
         // receives the request follows from the agent, so it is settled here rather than by
         // whichever machine id the draft happened to store.
         const choice = findMachineChoice(collectMachineChoices(machines), draft.selectedMachineId);
         if (!choice) {
-            Modal.alert(t('common.error'), 'Please select a machine');
+            // Two different failures wear the same shape here. Nothing selected
+            // is the composer's, and asking for a computer is the answer. A
+            // computer that was named and cannot be found is not: the start came
+            // from a session running on it, and telling the user to pick a
+            // machine sends them looking for a control that is not on screen —
+            // the sibling-chat `+` has no picker at all. A daemon signed in to a
+            // different account than the sessions it publishes leaves exactly
+            // this state, and it is worth naming rather than papering over.
+            Modal.alert(
+                t('common.error'),
+                draft.selectedMachineId
+                    ? 'This session’s computer is not registered with this account, so nothing can start a session on it. Check that Happy is running there and signed in to this account.'
+                    : 'Please select a machine',
+            );
             return false;
         }
 
         // The draft survives machine changes and app upgrades. Resolve it again
         // at launch time so a stale Claude selection cannot spawn Claude while
         // the selected computer only reports Codex (the Android 1.7.0 regression).
-        const agentType = resolveChoiceAgent(choice, draft.agentType);
+        // A bot is Happy Agent's to make whatever harness the draft last chose. A caller that names
+        // the agent (a new chat like an existing one) has picked it for this start alone; otherwise
+        // the pick is the harness last tapped in the composer, which outlives this session.
+        const pickedAgentType = draftOverrides.agentType ?? draftStore.pickedAgentType;
+        const createsBot = draft.createsBot;
+        const botName = draft.botName.trim();
+        const botFaceSeed = draft.botFaceSeeds[draft.botFaceSlot];
+        const botNameProblem = createsBot ? describeBotNameProblem(botName) : null;
+        if (botNameProblem !== null) {
+            Modal.alert(t('common.error'), botNameProblem);
+            return false;
+        }
+        const agentType = createsBot ? 'rig' : resolveNewSessionAgent(choice, draft.agentType, pickedAgentType);
         const agentChanged = agentType !== draft.agentType;
         const machine = resolveAgentMachine(choice, agentType);
         if (!machine) {
@@ -162,12 +340,17 @@ export function useStartSessionFromDraft() {
                 t('common.error'),
                 agentType === 'rig'
                     ? 'Happy Agent is not running on this computer'
-                    : 'This computer has no Happy CLI daemon to start that agent',
+                    : 'Happy CLI is not available on your computer. Run `happy daemon start` on your computer, then try again.',
             );
             return false;
         }
         if (!isMachineOnline(machine)) {
-            Modal.alert(t('common.error'), 'Machine is offline');
+            Modal.alert(
+                t('common.error'),
+                agentType === 'rig'
+                    ? 'Machine is offline'
+                    : 'Happy CLI is offline on your computer. Run `happy daemon start` on your computer, then try again.',
+            );
             return false;
         }
         const rigCreation = agentType === 'rig'
@@ -175,6 +358,10 @@ export function useStartSessionFromDraft() {
             : null;
         if (agentType === 'rig' && !rigCreation) {
             Modal.alert(t('common.error'), 'This machine cannot start Happy agent sessions');
+            return false;
+        }
+        if (createsBot && !rigCreation?.supportsBots) {
+            Modal.alert(t('common.error'), 'Happy Agent on this computer cannot create bots yet. Update it and try again.');
             return false;
         }
         const defaults = rigCreation
@@ -206,7 +393,7 @@ export function useStartSessionFromDraft() {
             ),
             agentChanged
                 ? [defaults.modelMode]
-                : [draft.modelMode, defaults.modelMode],
+                : [retireModelMode(agentType, draft.modelMode), defaults.modelMode],
         );
         const effortDefault = rigCreation?.defaultEffortForModel(model?.key)
             ?? defaults.effortLevel;
@@ -223,17 +410,53 @@ export function useStartSessionFromDraft() {
             return false;
         }
 
-        const prompt = draft.input.trim();
-        const attachments = draft.attachments;
+        // A bot takes no first message from here: its conversation opens empty
+        // and the prompt typed for a session stays in the draft, untouched.
+        const prompt = createsBot ? '' : draft.input.trim();
+        const attachments = createsBot ? [] : draft.attachments;
+        let ownsCreatedSession = true;
+        const isCurrentTarget = () => {
+            const current = useNewSessionDraft.getState();
+            // Only what the composer supplied is watched. A caller that named a
+            // machine, a path or an agent itself never read the composer for it,
+            // so the composer changing underneath says nothing about whether the
+            // session being started is still the one that was asked for — and
+            // treating it as a mismatch would put down every start made from a
+            // chat's own `+`, which supplies all of them.
+            const targetUnchanged = (['selectedMachineId', 'selectedPath', 'agentType', 'permissionMode', 'modelMode', 'effortLevel', 'sessionType', 'worktreeKey'] as const)
+                .every(key => draftOverrides[key] !== undefined || current[key] === draft[key]);
+            // A bot is only ever created from the composer — no override names
+            // one — so these are always read straight off the draft.
+            const botUnchanged = (['createsBot', 'botName', 'botFaceSeeds', 'botFaceSlot'] as const)
+                .every(key => current[key] === draft[key]);
+            return ownsCreatedSession && targetUnchanged && botUnchanged;
+        };
+        // A draft names either a directory or a catalog project. The project route asks Happy Agent
+        // for the project by identity, so the path below is only a fallback for the directory route.
+        const draftProjectId = draft.selectedProjectId?.trim() || null;
+        if (draftProjectId && !rigCreation) {
+            Modal.alert(
+                t('common.error'),
+                'Only Happy Agent knows where this project is, so no other harness can open it. Switch the harness back to Happy Agent, or pick the project’s folder.',
+            );
+            return false;
+        }
         const selectedPath = draft.selectedPath?.trim() || '~';
         const absolutePath = resolveAbsolutePath(selectedPath, machine.metadata?.homeDir);
-        const sessionList = (sessions ?? []).filter((item): item is Session => typeof item !== 'string');
+        // Read when Start is pressed rather than subscribed to. The session list
+        // is rebuilt on every token a running agent sends, and this hook is
+        // mounted on screens — the chat's own tab strip among them — that must
+        // not re-render at that rate for a list only the press reads.
+        const sessionList = (storage.getState().sessionsData ?? [])
+            .filter((item): item is Session => typeof item !== 'string');
         const places = collectSessionPlaces({
             machineIds: choice.machineIds,
             selectedPath,
             sessions: sessionList,
         });
-        const selectedProjectId = places.find((place) => place.path === selectedPath)?.projectId ?? null;
+        const selectedProjectId = draftProjectId
+            ?? places.find((place) => place.path === selectedPath)?.projectId
+            ?? null;
         const projectWorkspaces = collectSessionWorkspaces({
             machineIds: choice.machineIds,
             projectId: selectedProjectId,
@@ -242,15 +465,19 @@ export function useStartSessionFromDraft() {
         const requestedWorktree = draft.sessionType === 'worktree'
             ? draft.worktreeKey ?? '__new__'
             : '__none__';
-        let happyAgentTarget: ReturnType<typeof resolveHappyAgentSpawnTarget>;
+        let happyAgentTarget: HappyAgentSpawnTarget | null;
         try {
-            happyAgentTarget = rigCreation
-                ? resolveHappyAgentSpawnTarget({
-                    projectId: selectedProjectId,
-                    workspaceSelection: requestedWorktree,
-                    workspaces: projectWorkspaces,
-                })
-                : null;
+            // A bot is its own destination and only the composer asks for one,
+            // so it is settled before the workspace routes below are consulted.
+            happyAgentTarget = createsBot
+                ? { kind: 'bot', name: botName }
+                : rigCreation
+                    ? (targetOverride !== undefined ? targetOverride : resolveHappyAgentSpawnTarget({
+                        projectId: selectedProjectId,
+                        workspaceSelection: requestedWorktree,
+                        workspaces: projectWorkspaces,
+                    }))
+                    : null;
         } catch (error) {
             Modal.alert(
                 t('common.error'),
@@ -279,11 +506,14 @@ export function useStartSessionFromDraft() {
         const clientRequestId = resolveSpawnRequestId(buildSpawnRequestSignature({
             machineId: machine.id,
             agent: agentType,
-            directory: selectedPath,
+            // Two catalog projects share the same empty path, so the project itself is what
+            // distinguishes them: without it, starting in one would be deduped into the other.
+            place: draftProjectId ? projectPlaceKey(draftProjectId) : selectedPath,
             worktree: worktreeSelection,
             modelKey: model.key,
             permissionMode: permission.key,
             effort: effort?.key ?? null,
+            bot: createsBot ? { name: botName, faceSeed: botFaceSeed } : null,
         }));
 
         const run = beginRun();
@@ -302,11 +532,28 @@ export function useStartSessionFromDraft() {
         // A session that arrives after Stop still has to be put down, and by
         // then nobody is on this screen to do it, so this runs unattended.
         const stopAbandonedSession = async (createdSessionId: string) => {
-            // The daemon first: it holds the child process and its socket is the
-            // one this session was spawned through. The session's own kill RPC
-            // is tried after, for a session already up and detached from the
-            // daemon, and the archive last so a session nobody can reach still
-            // leaves the active list rather than sitting there as debris.
+            // Every cleanup route shares this ownership, including late async
+            // completions. Opening/using the session elsewhere revokes it.
+            if (!ownsCreatedSession) return;
+            ownsCreatedSession = false;
+            // Happy Agent serves no machine stop: its session's own kill RPC
+            // archives a bot in the catalog that owns it, which the generic
+            // archive refuses. Happy CLI's daemon is asked first: it holds the
+            // child process and its socket is the one this session was spawned
+            // through. The session's own kill RPC is tried after, for a session
+            // already up and detached from the daemon, and the archive last so a
+            // session nobody can reach still leaves the active list rather than
+            // sitting there as debris. A Stop pressed while Happy Agent's answer
+            // is still pending leaves what it made; the next press makes another,
+            // which is accepted over a cancel RPC for that one window.
+            if (rigCreation) {
+                const killed = await sessionKill(createdSessionId);
+                if (!killed.success) {
+                    console.error('[spawn] The abandoned Happy Agent session could not be put away:', killed.message);
+                }
+                await sync.refreshSessions().catch(() => { /* the list catches up on its own */ });
+                return;
+            }
             const stopped = await machineStopSession(machine.id, createdSessionId);
             if (!stopped.success) {
                 const killed = await sessionKill(createdSessionId);
@@ -317,8 +564,9 @@ export function useStartSessionFromDraft() {
             await sync.refreshSessions().catch(() => { /* the list catches up on its own */ });
         };
         try {
+            const existingSessionId = getSpawnedSessionId(clientRequestId);
             let spawnDirectory = absolutePath;
-            if (worktreeSelection === '__new__' && !happyAgentTarget) {
+            if (!existingSessionId && worktreeSelection === '__new__' && !happyAgentTarget) {
                 // `worktreeSelection` can only remain `__new__` when a creation
                 // machine was resolved above.
                 const worktreeResult = await untilCanceled(createWorktree(worktreeCreationMachine!.id, absolutePath));
@@ -400,7 +648,7 @@ export function useStartSessionFromDraft() {
                 return approved ? spawn(true) : null;
             };
 
-            const spawning = spawn();
+            const spawning = existingSessionId ? Promise.resolve(existingSessionId) : spawn();
             const spawned = await untilCanceled(spawning);
             if (spawned === CANCELED) {
                 // The key was already spent by cancelStart, on the tick Stop
@@ -413,11 +661,21 @@ export function useStartSessionFromDraft() {
             }
             const sessionId = spawned;
             if (!sessionId) return false;
-            // The idempotency key did its job; the next Start is a new session.
-            completeSpawnRequest();
+            rememberSpawnedSession(clientRequestId, sessionId, () => {
+                run.cancel();
+                void stopAbandonedSession(sessionId).catch(error => console.error('Failed to stop abandoned session:', error));
+            }, () => { ownsCreatedSession = false; });
             showPhase('opening');
 
-            if (await untilCanceled(sync.refreshSessions()) === CANCELED) {
+            if (await untilCanceled(sync.ensureSessionReady(sessionId)) === CANCELED) {
+                void stopAbandonedSession(sessionId);
+                return false;
+            }
+
+            // Ownership must still hold before changing modes as well as before
+            // sending: a session adopted elsewhere is no longer this attempt's.
+            if (run.canceled || !isCurrentTarget()) {
+                completeSpawnRequest(clientRequestId);
                 void stopAbandonedSession(sessionId);
                 return false;
             }
@@ -433,28 +691,60 @@ export function useStartSessionFromDraft() {
                 });
             }
 
-            // Last look before anything becomes irreversible. Past this line the
-            // prompt is cleared, the screen changes, and the message goes out —
-            // a Stop that lands a moment too late must not do all three anyway.
-            if (run.canceled) {
-                void stopAbandonedSession(sessionId);
-                return false;
+            if (createsBot) {
+                // The face travels as a session attachment, the way a picture
+                // for a message does, then the bot is asked to wear it. A face
+                // that cannot be painted or delivered is not a reason to lose
+                // the bot that was just made: it opens without one, and says so.
+                showPhase('avatar');
+                const worn = await untilCanceled(wearBotFace(sessionId, botFaceSeed));
+                if (worn === CANCELED) {
+                    void stopAbandonedSession(sessionId);
+                    return false;
+                }
+                if (!worn.ok) {
+                    offerBotFaceRetry(sessionId, botFaceSeed, botName, worn);
+                }
             }
 
-            draft.setInput('');
-            draft.setAttachments([]);
-            navigateToSession(sessionId);
             if (prompt || attachments.length > 0) {
-                // The session is ready at this point. Open it immediately and
-                // let the first message enqueue without keeping the user on Home
-                // during image upload or a slower network round-trip.
-                void sync.sendMessage(sessionId, prompt, { source: 'new_session', attachments }).catch((error) => {
-                    Modal.alert(
-                        t('common.error'),
-                        error instanceof Error ? error.message : 'Failed to send the first message',
-                    );
-                });
+                const accepted = await untilCanceled(sync.sendMessage(sessionId, prompt, {
+                    source: 'new_session', attachments, signal: run.controller.signal,
+                    isCurrent: isCurrentTarget,
+                    onAccepted: () => {
+                        run.accepted = true;
+                        completeSpawnRequest(clientRequestId);
+                    },
+                }));
+                if (accepted === CANCELED) {
+                    void stopAbandonedSession(sessionId);
+                    return false;
+                }
+                if (!accepted) {
+                    if (!isCurrentTarget()) {
+                        completeSpawnRequest(clientRequestId);
+                        void stopAbandonedSession(sessionId);
+                    }
+                    return false;
+                }
             }
+            completeSpawnRequest(clientRequestId);
+            // Only what was consumed is cleared. A start that brought its own
+            // prompt never read the draft, and emptying it would throw away
+            // whatever the user has been typing on another screen.
+            // Do not erase edits made while hydration or attachment upload ran.
+            const currentDraft = useNewSessionDraft.getState();
+            if (createsBot) {
+                // The next bot starts from a clean name and fresh faces; the
+                // composer goes back to offering a session, the ordinary case.
+                if (currentDraft.botName === draft.botName) currentDraft.setBotName('');
+                currentDraft.rollBotFaces();
+                currentDraft.setCreatesBot(false);
+            } else if (draftOverrides.input === undefined) {
+                if (currentDraft.input === draft.input) currentDraft.setInput('');
+                if (currentDraft.attachments === attachments) currentDraft.setAttachments([]);
+            }
+            (openSession ?? navigateToSession)(sessionId);
             return true;
         } catch (error) {
             // A failure the user already walked away from is not news.
@@ -474,7 +764,7 @@ export function useStartSessionFromDraft() {
                 if (isMountedRef.current) setPhase(null);
             }
         }
-    }, [defaultOverrides, machines, navigateToSession, sessions]);
+    }, [defaultOverrides, machines, navigateToSession]);
 
     return { isStarting: phase !== null, phase, startSession, cancelStart };
 }

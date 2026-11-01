@@ -1,0 +1,359 @@
+#if canImport(UIKit)
+import HappyCore
+import HappyIcons
+import HappyLayout
+import UIKit
+
+/// A view-free drawing plan. Both measurement and drawing use Home's
+/// existing pure layouts. Only avatars and active animation overlays need
+/// native views; text, rules, tree branches and status dots are bitmaps.
+struct HomeRowDrawing: Sendable {
+    enum Mark: Sendable {
+        case text(String, TextStyle, ColorToken, CGRect)
+        case fill(ColorToken, CGRect, round: Bool)
+        case icon(String, CGFloat, ColorToken, CGRect)
+        case card(CGRect, radius: CGFloat, top: Bool, bottom: Bool, selection: CGRect?)
+        case clip(CGRect)
+    }
+
+    /// How a row answers a finger, as the table's cells did.
+    enum Press: Sendable, Equatable {
+        /// No feedback: headings, and the tablet's chats and cards.
+        case none
+        /// A fill behind the content: a flat session's selected background,
+        /// a project row's pressed one.
+        case fill(ColorToken)
+        /// The content at half strength over an unchanged background: the
+        /// archive toggle.
+        case dim
+    }
+
+    /// A home row's part of its inset card (`HomeCardLayout`): drawn by the
+    /// row view under the press fill, which fills only this.
+    struct Card: Sendable, Equatable {
+        var frame: CGRect
+        var roundsTop: Bool
+        var roundsBottom: Bool
+        var color: ColorToken
+    }
+
+    var size: CGSize = .zero
+    /// The row's page colour. It is the row view's own layer, not a mark, so
+    /// the press fill sits between it and the content.
+    var background: ColorToken?
+    var card: Card?
+    var press = Press.none
+    var marks: [Mark] = []
+    var avatar: SessionAvatar?
+    var avatarFrame: CGRect = .zero
+    var avatarAlpha: CGFloat = 1
+    var monochromeAvatar = false
+    var addFrame: CGRect?
+    /// A title whose work runs: drawn in the bitmap like any, with a
+    /// sheen band over it in the overlay (`ShimmerBand`).
+    var shimmer: ShimmerTitle?
+    var accessibilityLabel = ""
+    var accessibilityValue: String?
+    var isHeading = false
+    var contentAlpha: CGFloat = 1
+    var pulsingDots: [(ColorToken, CGRect)] = []
+    let environment: HomeTextEnvironment
+    let dark: Bool
+    /// Archived phone rows have fixed geometry for their only live overlay
+    /// (the avatar). Their exact text plan belongs to the bitmap display
+    /// queue, so opening an archive doesn't measure thousands of hidden
+    /// titles before the first visible row can appear. Owns only values.
+    private var deferredDrawing: (@Sendable () -> HomeRowDrawing)?
+    var defersText: Bool { deferredDrawing != nil }
+
+    init(environment: HomeTextEnvironment, dark: Bool) {
+        self.environment = environment; self.dark = dark
+    }
+
+    nonisolated func draw(in context: CGContext) {
+        if let deferredDrawing {
+            #if DEBUG || HAPPY_FIXTURES
+            dispatchPrecondition(condition: .notOnQueue(.main))
+            #endif
+            deferredDrawing().draw(in: context); return
+        }
+        UIGraphicsPushContext(context)
+        defer { UIGraphicsPopContext() }
+        context.setAlpha(contentAlpha)
+        for mark in marks {
+            switch mark {
+            case .clip(let frame): context.clip(to: frame)
+            case .card(let frame, let radius, let top, let bottom, let selection):
+                var corners: UIRectCorner = []
+                if top { corners.formUnion([.topLeft, .topRight]) }
+                if bottom { corners.formUnion([.bottomLeft, .bottomRight]) }
+                let path = UIBezierPath(roundedRect: frame, byRoundingCorners: corners, cornerRadii: CGSize(width: radius, height: radius))
+                context.setFillColor(resolved(Palette.surface).cgColor)
+                context.addPath(path.cgPath); context.fillPath()
+                if let selection {
+                    context.saveGState(); context.addPath(path.cgPath); context.clip()
+                    context.setFillColor(resolved(Palette.surfaceSelected).cgColor); context.fill(selection)
+                    context.restoreGState()
+                }
+                context.setStrokeColor(resolved(Palette.legacyDivider).cgColor)
+                context.setLineWidth(environment.rows.hairline)
+                context.addPath(path.cgPath); context.strokePath()
+            case .fill(let color, let frame, let round):
+                context.setFillColor(resolved(color).cgColor)
+                if round { context.fillEllipse(in: frame) } else { context.fill(frame) }
+            case .text(let value, let style, let color, let frame):
+                var attributes = style.scaled(environment.text.scale).attributes(color: resolved(color), lineBreakMode: .byTruncatingTail)
+                attributes[.font] = style.font(in: environment.text)
+                let text = NSAttributedString(string: style.uppercase ? value.uppercased() : value, attributes: attributes)
+                text.draw(with: frame, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], context: nil)
+            case .icon(let name, let size, let color, let frame):
+                guard let glyph = IconCatalog.glyph(for: .ionicons(name)) else { continue }
+                let layout = glyph.layout(size: size, scale: environment.text.displayScale)
+                let box = layout.frame(centeredIn: frame, scale: environment.text.displayScale)
+                context.saveGState()
+                context.translateBy(x: box.minX, y: box.minY)
+                context.translateBy(x: layout.glyphOrigin.x, y: layout.glyphOrigin.y)
+                context.scaleBy(x: layout.glyphScale, y: layout.glyphScale)
+                context.setFillColor(resolved(color).cgColor)
+                // Happy's own vector renderer; no icon fonts or system glyph substitution.
+                context.addPath(glyph.path.cgPath); context.fillPath()
+                context.restoreGState()
+            }
+        }
+    }
+
+    /// A shimmering title: its words, how they are drawn, and how wide
+    /// they run in their frame.
+    struct ShimmerTitle: Sendable {
+        var value: String
+        var style: TextStyle
+        var color: ColorToken
+        var frame: CGRect
+        var runWidth: CGFloat
+    }
+
+    /// The surface the title sits on, which the band mixes toward.
+    var shimmerGround: ColorToken { card?.color ?? background ?? Palette.surface }
+
+    /// The shimmering title again in the sheen band's colour, at the
+    /// origin of its own frame: the copy its band masks.
+    nonisolated func drawShimmerCopy(in context: CGContext) {
+        guard let shimmer else { return }
+        var copy = self
+        copy.deferredDrawing = nil
+        copy.contentAlpha = 1
+        let band = Shimmer.highlight(.sheen, ink: shimmer.color, ground: shimmerGround)
+        copy.marks = [.text(shimmer.value, shimmer.style, band, CGRect(origin: .zero, size: shimmer.frame.size))]
+        copy.draw(in: context)
+    }
+
+    nonisolated func resolved(_ token: ColorToken) -> UIColor {
+        UIColor(dark ? token.dark : token.light)
+    }
+
+    /// `carded` draws home's rows in their inset cards (`HomeCardLayout`),
+    /// the row at `place` in its card; otherwise as the tablet's list draws
+    /// them, full width.
+    nonisolated static func make(_ row: HomeListRow, width: CGFloat, grouped: Bool, selected: Bool, place: HomeCardPlace? = nil, carded: Bool = false, environment: HomeTextEnvironment, dark: Bool, catalog: TranslationCatalog = .english, deferArchiveText: Bool = false) -> HomeRowDrawing {
+        var plan = HomeRowDrawing(environment: environment, dark: dark)
+        let deferred = deferArchiveText && canDeferArchiveText(row)
+        let inCard = carded && row.isCardRow
+        // A card's row is laid out at the card's width and moved into it.
+        let rowWidth = inCard ? HomeCardLayout.contentWidth(width) : width
+        var separatorX: CGFloat = ProjectListMetrics.nameX
+        func measured(_ value: String, _ style: TextStyle) -> Measurable {
+            // Unmeasured, but as tall as the one line it is: a row's
+            // height follows its text.
+            if deferred { return .fixed(width: 0, height: value.isEmpty ? 0 : style.oneLine(in: environment.text)) }
+            return Measurable { HomeRowMeasurer.measure(value, style: style, in: environment.text, width: $0, maxLines: 1) }
+        }
+        func text(_ value: String, _ style: TextStyle, _ color: ColorToken, _ frame: CGRect) {
+            plan.marks.append(.text(value, style, color, frame))
+        }
+        func fill(_ color: ColorToken, _ frame: CGRect?, round: Bool = false) {
+            if let frame { plan.marks.append(.fill(color, frame, round: round)) }
+        }
+        func title(_ value: String, style: TextStyle, frame: CGRect, working: Bool, color: ColorToken = Palette.text) {
+            text(value, style, color, frame)
+            guard working else { return }
+            // The band runs across the words, not the column they sit in.
+            let advance = deferred ? frame.width : HomeRowMeasurer.measure(value, style: style, in: environment.text, width: .greatestFiniteMagnitude, maxLines: 1).width
+            plan.shimmer = ShimmerTitle(value: value, style: style, color: color, frame: frame, runWidth: min(advance, frame.width))
+        }
+        func activity(_ activity: HomeActivity, frame: CGRect?) {
+            guard activity.blocked || activity.unread else { return }
+            if activity.blocked, let frame {
+                plan.pulsingDots.append((Palette.sessionBlockedDot, frame)); return
+            }
+            fill(activity.blocked ? Palette.sessionBlockedDot : Palette.sessionReadyDot, frame, round: true)
+        }
+        func changes(_ changes: GitLineChanges?, flat: Bool) -> HomeGitDrawing {
+            HomeGitDrawing(changes, flat: flat, environment: environment)
+        }
+        func changesSize(_ parts: HomeGitDrawing) -> GitChangesLayout {
+            parts.layout
+        }
+        func drawChanges(_ parts: HomeGitDrawing, at frame: CGRect?) {
+            guard let frame else { return }
+            parts.append(to: &plan, at: frame)
+        }
+        func session(_ row: SessionRow, archived: Bool) {
+            let name = row.title ?? catalog("session.newChat")
+            plan.accessibilityLabel = [name, row.state == .permissionRequired ? catalog("status.permissionRequired") : row.state == .inputRequired ? catalog("status.inputRequired") : row.corner != .timestamp ? catalog("status.unread") : nil, row.projectName, row.workspaceName, row.timestamp].compactMap { $0 }.joined(separator: ", ")
+            plan.avatar = row.avatar
+            if grouped { plan.avatar?.harness = nil }
+            plan.avatarAlpha = archived || (!grouped && row.faded) ? 0.6 : 1
+            plan.contentAlpha = archived || (!grouped && row.faded) ? 0.6 : 1
+            if grouped {
+                plan.accessibilityLabel = [name, row.timestamp].joined(separator: ", ")
+                let layout = ProjectChatRowLayout(width: rowWidth, name: measured(name, TextStyles.projectName), corner: row.corner == .timestamp ? measured(row.timestamp, TextStyles.projectTimestamp) : .fixed(width: ProjectListMetrics.chatDotSize, height: ProjectListMetrics.chatDotSize))
+                plan.size = layout.size
+                plan.avatarFrame = layout.avatar
+                title(name, style: TextStyles.projectName, frame: layout.name, working: row.shimmersTitle)
+                if row.corner == .timestamp { text(row.timestamp, TextStyles.projectTimestamp, Palette.textSecondary, layout.corner) }
+                else { fill(row.corner == .blockedDot ? Palette.sessionBlockedDot : Palette.sessionReadyDot, layout.corner, round: true) }
+            } else {
+                let parts = changes(row.changes, flat: true)
+                let draftBox = Icon.ionicons("create-outline").layout(size: FlatSessionRowLayout.Metrics.draftIconSize, scale: environment.text.displayScale)?.size ?? CGSize(width: 13, height: 13)
+                let avatarSize = inCard ? HomeCardLayout.Metrics.sessionAvatar : FlatSessionRowLayout.Metrics.avatarSize
+                separatorX = FlatSessionRowLayout.Metrics.contentX(avatar: avatarSize)
+                // In a card, the card draws the hairline.
+                let layout = FlatSessionRowLayout(.init(width: rowWidth, title: measured(name, TextStyles.sessionTitle), timestamp: measured(row.timestamp, TextStyles.sessionTimestamp), project: measured(row.projectName, TextStyles.sessionProject), workspace: row.workspaceName.map { measured($0, TextStyles.sessionWorkspace) }, branchIcon: environment.rows.branchIcon, changes: row.changes == nil ? nil : changesSize(parts).size, draftIcon: row.hasDraft ? draftBox : nil, showsDivider: !inCard && row.showsDivider, lines: environment.rows.sessionLines, avatarSize: avatarSize))
+                plan.size = layout.size
+                plan.avatarFrame = layout.avatar
+                plan.avatarAlpha = row.faded ? 0.5 : 1
+                plan.monochromeAvatar = row.faded
+                title(name, style: TextStyles.sessionTitle, frame: layout.title, working: row.shimmersTitle, color: row.faded ? Palette.textSecondary : Palette.text)
+                if row.corner == .timestamp { text(row.timestamp, TextStyles.sessionTimestamp, Palette.textSecondary, layout.timestamp) }
+                else { fill(row.corner == .blockedDot ? Palette.sessionBlockedDot : Palette.sessionReadyDot, layout.dot, round: true) }
+                text(row.projectName, TextStyles.sessionProject, Palette.textSecondary, layout.project)
+                if let name = row.workspaceName, let frame = layout.workspace { text(name, TextStyles.sessionWorkspace, Palette.textSecondary, frame) }
+                if let frame = layout.branchIcon { plan.marks.append(.icon("git-branch-outline", 13, Palette.textSecondary, frame)) }
+                if let frame = layout.draftIcon { plan.marks.append(.icon("create-outline", 13, Palette.textSecondary, frame)) }
+                drawChanges(parts, at: layout.changes)
+                fill(Palette.legacyDivider, layout.divider)
+                plan.accessibilityLabel += parts.spoken.isEmpty ? "" : ", " + parts.spoken
+            }
+        }
+        switch row {
+        case .flat(.session(let row)): session(row, archived: false)
+        case .project(.bot(let row)), .project(.task(let row)): session(row, archived: false)
+        case .project(.archived(let row)): session(row, archived: true)
+        case .flat(.dayHeader), .project(.section), .project(.archiveHeader):
+            // Only the room between two cards.
+            plan.size = CGSize(width: width, height: HomeCardLayout.Metrics.gap)
+        case .flat(.archiveToggle(let hidden)), .project(.archiveToggle(let hidden)):
+            let value = catalog(hidden ? "sidebar.showArchived" : "sidebar.hideArchived")
+            let layout = ArchiveToggleLayout(width: width, label: measured(value, TextStyles.archiveToggle), paddingTop: grouped ? ArchiveToggleLayout.unbanded.top : ArchiveToggleLayout.Metrics.paddingTop, paddingBottom: grouped ? ArchiveToggleLayout.unbanded.bottom : ArchiveToggleLayout.Metrics.paddingBottom)
+            plan.size = layout.size
+            text(value, TextStyles.archiveToggle, Palette.textSecondary, layout.label)
+            let line = carded ? Palette.groupedSeparator : Palette.legacyDivider
+            fill(line, layout.leadingLine); fill(line, layout.trailingLine)
+            plan.accessibilityLabel = value
+        case .project(.machine(_, let name)):
+            let layout = MachineHeaderLayout(width: width, icon: environment.rows.machineIcon, name: measured(name, TextStyles.projectMachine))
+            plan.size = layout.size
+            text(name, TextStyles.projectMachine, Palette.textSecondary, layout.name)
+            plan.marks.append(.icon("desktop-outline", 12, Palette.textSecondary, layout.icon))
+            plan.accessibilityLabel = name; plan.isHeading = true
+        case .project(.project(let entry)):
+            let parts = changes(entry.changes, flat: false)
+            let layout = ProjectCardLayout(.init(width: rowWidth, hairline: environment.rows.hairline, name: measured(entry.name, TextStyles.projectName), showsDot: entry.activity.blocked || entry.activity.unread, changes: entry.changes == nil ? nil : .fixed(changesSize(parts).size), showsAdd: entry.origin != nil, showsTree: entry.worktreeCount > 0))
+            plan.size = layout.size; plan.avatar = entry.avatar; plan.avatarFrame = layout.avatar; plan.addFrame = layout.add
+            title(entry.name, style: TextStyles.projectName, frame: layout.name, working: entry.activity.working)
+            fill(Palette.textSecondary, layout.stem); activity(entry.activity, frame: layout.dot)
+            drawChanges(parts, at: layout.changes); plan.accessibilityLabel = entry.name
+        case .project(.worktree(let worktree, let last)):
+            let parts = changes(worktree.changes, flat: false)
+            let layout = WorktreeRowLayout(.init(width: rowWidth, hairline: environment.rows.hairline, label: measured(worktree.title, TextStyles.worktreeName), showsDot: worktree.activity.blocked || worktree.activity.unread, changes: worktree.changes == nil ? nil : .fixed(changesSize(parts).size), last: last))
+            plan.size = layout.size
+            title(worktree.title, style: TextStyles.worktreeName, frame: layout.label, working: worktree.activity.working)
+            fill(Palette.textSecondary, layout.trunk); fill(Palette.textSecondary, layout.elbow)
+            activity(worktree.activity, frame: layout.dot); drawChanges(parts, at: layout.changes)
+            plan.accessibilityLabel = worktree.title
+        case .project(.worktreeToggle(let toggle)):
+            let value = toggle.expanded ? catalog("sidebar.showFewerWorkspaces") : catalog("sidebar.showAllWorkspaces", ["count": .number(toggle.worktreeCount)])
+            let layout = WorktreeRowLayout(.init(width: rowWidth, hairline: environment.rows.hairline, label: measured(value, TextStyles.worktreeToggle), chevron: environment.rows.branchIcon, showsDot: toggle.activity.blocked || toggle.activity.unread, changes: nil, last: true))
+            plan.size = layout.size
+            text(value, TextStyles.worktreeToggle, Palette.textSecondary, layout.label)
+            fill(Palette.textSecondary, layout.trunk); fill(Palette.textSecondary, layout.elbow)
+            if let frame = layout.chevron { plan.marks.append(.icon(toggle.expanded ? "chevron-up" : "chevron-down", 13, Palette.textSecondary, frame)) }
+            activity(toggle.activity, frame: layout.dot)
+            plan.accessibilityLabel = value; plan.accessibilityValue = toggle.expanded ? "expanded" : "collapsed"
+        }
+        switch row {
+        case .flat(.session) where !carded: plan.press = .fill(Palette.surfaceSelected)
+        case .flat(.session), .project(.project), .project(.worktree), .project(.worktreeToggle), .project(.bot), .project(.task), .project(.archived):
+            plan.press = .fill(carded ? Palette.groupedCellHighlight : Palette.surfacePressed)
+        case .flat(.archiveToggle), .project(.archiveToggle): plan.press = .dim
+        case .flat(.dayHeader), .project(.machine), .project(.section), .project(.archiveHeader): plan.press = .none
+        }
+        if carded {
+            plan.background = Palette.groupedGround
+            if inCard {
+                let layout = HomeCardLayout(
+                    width: width,
+                    height: plan.size.height,
+                    roundsTop: place?.first ?? true,
+                    roundsBottom: place?.last ?? true,
+                    separatorX: place?.separated == true ? separatorX : nil,
+                    hairline: environment.rows.hairline
+                )
+                fill(Palette.groupedSeparator, layout.separator)
+                plan.offset(by: layout.card.minX)
+                plan.size.width = width
+                plan.card = Card(
+                    frame: layout.card,
+                    roundsTop: layout.roundsTop,
+                    roundsBottom: layout.roundsBottom,
+                    color: selected ? Palette.groupedCellHighlight : Palette.groupedCard
+                )
+            }
+        } else {
+            plan.background = selected ? Palette.surfaceSelected : grouped ? Palette.groupedBackground : Palette.flatListBackground
+        }
+        if deferred {
+            plan.marks = []
+            plan.deferredDrawing = {
+                make(row, width: width, grouped: grouped, selected: selected, place: place, carded: carded, environment: environment, dark: dark, catalog: catalog)
+            }
+        }
+        return plan
+    }
+
+    /// Moves everything drawn `dx` to the right: a card's row, laid out at
+    /// the card's width, into the card.
+    private mutating func offset(by dx: CGFloat) {
+        func moved(_ frame: CGRect) -> CGRect { frame.offsetBy(dx: dx, dy: 0) }
+        marks = marks.map { mark in
+            switch mark {
+            case .text(let value, let style, let color, let frame): .text(value, style, color, moved(frame))
+            case .fill(let color, let frame, let round): .fill(color, moved(frame), round: round)
+            case .icon(let name, let size, let color, let frame): .icon(name, size, color, moved(frame))
+            case .card(let frame, let radius, let top, let bottom, let selection): .card(moved(frame), radius: radius, top: top, bottom: bottom, selection: selection.map(moved))
+            case .clip(let frame): .clip(moved(frame))
+            }
+        }
+        avatarFrame = moved(avatarFrame)
+        addFrame = addFrame.map(moved)
+        shimmer = shimmer.map { ShimmerTitle(value: $0.value, style: $0.style, color: $0.color, frame: moved($0.frame), runWidth: $0.runWidth) }
+        pulsingDots = pulsingDots.map { ($0.0, moved($0.1)) }
+    }
+
+    nonisolated static func canDeferArchiveText(_ row: HomeListRow) -> Bool {
+        switch row {
+        case .flat(.session(let session)), .project(.archived(let session)):
+            session.archived && !session.shimmersTitle && session.corner == .timestamp && session.changes == nil
+        default: false
+        }
+    }
+
+    nonisolated static func dayTitle(_ age: SessionList.DayAge, catalog: TranslationCatalog = .english) -> String {
+        switch age {
+        case .today: catalog("sessionHistory.today")
+        case .yesterday: catalog("sessionHistory.yesterday")
+        case .daysAgo(let count): catalog("sessionHistory.daysAgo", ["count": .number(count)])
+        }
+    }
+}
+#endif

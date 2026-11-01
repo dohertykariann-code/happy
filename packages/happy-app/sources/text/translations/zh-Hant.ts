@@ -5,7 +5,7 @@
  * - Functions with typed object parameters for dynamic text
  */
 
-import { TranslationStructure } from "../_default";
+import { en, type TranslationStructure } from "../_default";
 
 /**
  * Chinese plural helper function
@@ -67,6 +67,7 @@ export const zhHant: TranslationStructure = {
         fileViewer: '檔案檢視器',
         loading: '載入中...',
         retry: '重試',
+        loadMore: '載入更多',
         delete: '刪除',
         optional: '選填',
     },
@@ -81,6 +82,7 @@ export const zhHant: TranslationStructure = {
     },
 
     status: {
+        syncing: '同步中',
         connected: '已連線',
         connecting: '連線中',
         disconnected: '已中斷連線',
@@ -138,6 +140,7 @@ export const zhHant: TranslationStructure = {
         termsOfService: '服務條款',
         eula: '終端使用者授權協議',
         supportUs: '支援我們',
+        supportUnavailable: '目前無法購買，請稍後再試。',
         supportUsSubtitlePro: '感謝您的支援！',
         supportUsSubtitle: '支援專案開發',
         scanQrCodeToAuthenticate: '掃描 QR Code 進行驗證',
@@ -216,6 +219,7 @@ export const zhHant: TranslationStructure = {
         flatList: '平鋪列表',
         groupByProject: '按專案分組',
         appearanceSettings: '外觀設定',
+        worktreeTabs: ({ count }: { count: number }) => `${count} 個分頁`,
     },
 
     settingsFeatures: {
@@ -329,6 +333,9 @@ export const zhHant: TranslationStructure = {
         forkErrorMissingMetadata: '缺少分叉所需的會話元資料。',
         forkErrorGeneric: '分叉會話失敗。',
         forkClaudeOnly: '目前僅支援 Claude 會話的分叉。',
+        archiveAction: '封存',
+        startingChat: '正在啟動新對話…',
+        actionsTitle: '工作階段',
     },
 
     commandPalette: {
@@ -336,6 +343,9 @@ export const zhHant: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: '伺服器設定',
         enterServerUrl: '請輸入伺服器 URL',
@@ -429,6 +439,7 @@ export const zhHant: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: '準備開始寫程式？',
             installCli: '安裝 Happy CLI',
@@ -552,6 +563,9 @@ export const zhHant: TranslationStructure = {
         hideArchived: '隱藏已封存',
         newSession: '新建對話',
         projects: "專案",
+        bots: '機器人',
+        showAllWorkspaces: ({ count }: { count: number }) => `顯示全部 ${count} 個工作區`,
+        showFewerWorkspaces: '收合',
     },
 
     zen: {
@@ -717,7 +731,7 @@ export const zhHant: TranslationStructure = {
         },
         // Bring your own agent
         byoTitle: '使用自己的代理',
-        byoDescription: '使用您自己的 ElevenLabs 代理取代 Happy 預設代理。無需訂閱 — 直接使用您自己的 ElevenLabs 帳戶連線。您的代理必須定義兩個用戶端工具：messageClaudeCode（向編碼代理傳送文字）和 processPermissionRequest（允許或拒絕工具使用）。透過 {{initialConversationContext}} 動態變數接收工作階段上下文。',
+        byoDescription: '使用您自己的 ElevenLabs 代理取代 Happy 預設代理。無需訂閱 — 直接使用您自己的 ElevenLabs 帳戶連線。您的代理必須定義兩個用戶端工具：sendMessageToSession（向編碼代理傳送文字）和 processPermissionRequest（允許或拒絕工具使用）。透過 {{initialConversationContext}} 動態變數接收工作階段上下文。',
         customAgentId: 'ElevenLabs Agent ID',
         customAgentIdNotSet: '未設定',
         customAgentIdDescription: '輸入您的 ElevenLabs Agent ID。留空則使用 Happy 預設代理。',
@@ -725,7 +739,7 @@ export const zhHant: TranslationStructure = {
         bypassToken: '直接連線',
         bypassTokenSubtitle: '跳過 Happy 伺服器，直接連線到 ElevenLabs',
         promptGuideTitle: '代理提示詞指南',
-        promptGuideDescription: '您的 ElevenLabs 代理需要：\n\n• 工具：messageClaudeCode — 參數：message (string)。向活躍的編碼工作階段傳送訊息。\n• 工具：processPermissionRequest — 參數：decision ("allow" 或 "deny")。核准或拒絕待處理的工具權限。\n• 動態變數：{{initialConversationContext}} — 啟動時接收工作階段歷史和上下文。\n\n代理充當使用者和編碼代理之間的語音橋梁。它應該簡潔，僅在被呼叫時回應，並在編碼代理完成工作時進行報告。',
+        promptGuideDescription: '您的 ElevenLabs 代理需要：\n\n• 工具：sendMessageToSession — 參數：sessionId (string), message (string)。向指定的編碼工作階段傳送訊息。\n• 工具：processPermissionRequest — 參數：requestId (string), decision ("allow" 或 "deny")。核准或拒絕待處理的工具權限。\n• 動態變數：{{initialConversationContext}} — 啟動時接收工作階段歷史和上下文。\n\n代理充當使用者和編碼代理之間的語音橋梁。它應該簡潔，僅在被呼叫時回應，並在編碼代理完成工作時進行報告。',
         usageTitle: '使用量（過去 30 天）',
         usageFooter: '過去 30 天使用的語音時間。免費方案: 20 分鐘。訂閱用戶: 5 小時。每月最多 100 次對話。',
         usageLabel: '語音時間',
@@ -741,7 +755,7 @@ export const zhHant: TranslationStructure = {
         status: '狀態',
         statusActive: '活躍',
         statusNotAuthenticated: '未驗證',
-        anonymousId: '匿名 ID',
+        anonymousId: '分析 ID',
         publicId: '公共 ID',
         notAvailable: '不可用',
         linkNewDevice: '連結新裝置',
@@ -760,10 +774,10 @@ export const zhHant: TranslationStructure = {
         secretKeyCopied: '金鑰已複製到剪貼簿。請將其保存在安全的地方！',
         secretKeyCopyFailed: '複製金鑰失敗',
         privacy: '隱私',
-        privacyDescription: '透過分享匿名使用資料來幫助改進應用程式。不會收集個人資訊。',
+        privacyDescription: '分享使用資料（例如您使用的功能和裝置類型），協助我們改進 Happy。絕不包括您的訊息或程式碼。',
         analytics: '分析',
         analyticsDisabled: '不分享資料',
-        analyticsEnabled: '分享匿名使用資料',
+        analyticsEnabled: '分享使用資料',
         dangerZone: '危險區域',
         logout: '登出',
         logoutSubtitle: '登出並清除本機資料',
@@ -860,6 +874,14 @@ export const zhHant: TranslationStructure = {
         friends: '好友',
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
+    troubleshoot: {
+        ...en.troubleshoot,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Codex 和 Claude Code 行動用戶端',
@@ -924,7 +946,11 @@ export const zhHant: TranslationStructure = {
         unknownEvent: '未知事件',
         usageLimitUntil: ({ time }: { time: string }) => `使用限制到 ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `未傳送：${reason}`,
         unknownTime: '未知時間',
+        mediaPosition: ({ index, total }: { index: number; total: number }) => `第 ${index} 項，共 ${total} 項`,
     },
 
     codex: {
@@ -1073,6 +1099,11 @@ export const zhHant: TranslationStructure = {
         sourceCamera: '拍照',
         cameraPermissionTitle: '相機存取',
         cameraPermissionMessage: '允許存取相機以在訊息中拍攝照片。',
+        attachTitle: '新增圖片',
+        pasteFromClipboard: '從剪貼簿貼上',
+        chooseFromLibrary: '照片圖庫',
+        nothingToPasteTitle: '沒有可貼上的內容',
+        nothingToPasteMessage: '請先複製一張圖片，然後再試一次。',
     },
 
     feed: {
@@ -1082,4 +1113,16 @@ export const zhHant: TranslationStructure = {
         friendAccepted: ({ name }: { name: string }) => `您現在與 ${name} 成為了好友`,
         friendAcceptedGeneric: '好友請求已接受',
     },
+
+    // What new work will be, in the middle of its empty chat (the native apps' compose).
+    newWork: {
+        task: '任務',
+        bot: '機器人',
+        name: '名稱（選填）',
+        taskNote: '如果不命名，任務會根據第一則訊息自行命名。',
+        botNote: '機器人是一段長期持續的對話，擁有自己的資料夾。',
+        taskFailed: ({ reason }: { reason: string }) => `無法啟動任務。${reason}你的文字和附件仍保留在這裡。`,
+        botFailed: ({ reason }: { reason: string }) => `無法啟動機器人。${reason}你的文字和附件仍保留在這裡。`,
+    },
+
 } as const;
