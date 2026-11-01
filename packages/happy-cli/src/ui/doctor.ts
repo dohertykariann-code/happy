@@ -10,11 +10,20 @@ import { configuration } from '@/configuration'
 import { readSettings, readCredentials } from '@/persistence'
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient'
 import { findAllHappyProcesses } from '@/daemon/doctor'
-import { readDaemonState } from '@/persistence'
+import { readDaemonState, type DaemonLocallyPersistedState } from '@/persistence'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { projectPath } from '@/projectPath'
 import packageJson from '../../package.json'
+
+/**
+ * `controlToken` authenticates the daemon's local control server. It must
+ * never be printed to a terminal or log that could be retained, so every
+ * display of daemon state goes through this first.
+ */
+export function redactDaemonStateForDisplay(state: DaemonLocallyPersistedState): DaemonLocallyPersistedState {
+    return { ...state, controlToken: state.controlToken ? '<redacted>' : state.controlToken };
+}
 
 /**
  * Get relevant environment information for debugging
@@ -89,7 +98,7 @@ export async function runDoctorDaemon(): Promise<void> {
         if (state) {
             console.log(chalk.bold('\n📄 Daemon State:'));
             console.log(chalk.blue(`Location: ${configuration.daemonStateFile}`));
-            console.log(chalk.gray(JSON.stringify(state, null, 2)));
+            console.log(chalk.gray(JSON.stringify(redactDaemonStateForDisplay(state), null, 2)));
         }
     } catch (error) {
         console.log(chalk.red('❌ Error checking daemon status'));
@@ -273,7 +282,7 @@ export async function runDoctorCommand(): Promise<void> {
         if (state) {
             console.log(chalk.bold('\n📄 Daemon State:'));
             console.log(chalk.blue(`Location: ${configuration.daemonStateFile}`));
-            console.log(chalk.gray(JSON.stringify(state, null, 2)));
+            console.log(chalk.gray(JSON.stringify(redactDaemonStateForDisplay(state), null, 2)));
         }
     } catch (error) {
         console.log(chalk.red('❌ Error checking daemon status'));
