@@ -105,8 +105,14 @@ describe('claudeRemote', () => {
             isAborted: () => false, onSessionFound: vi.fn(), onMessage: vi.fn(),
         });
         expect(received).toEqual([
-            expect.objectContaining({ message: { role: 'user', content: 'Original prompt' } }),
-            expect.objectContaining({ message: { role: 'user', content: 'User retry after login' } }),
+            expect.objectContaining({ message: { role: 'user', content: expect.arrayContaining([
+                expect.objectContaining({ type: 'text', text: 'Original prompt' }),
+                expect.objectContaining({ type: 'text', text: wrapHappySystem(CHANGE_TITLE_INSTRUCTION) }),
+            ]) } }),
+            expect.objectContaining({ message: { role: 'user', content: expect.arrayContaining([
+                expect.objectContaining({ type: 'text', text: 'User retry after login' }),
+                expect.objectContaining({ type: 'text', text: wrapHappySystem(CHANGE_TITLE_INSTRUCTION) }),
+            ]) } }),
         ]);
         expect(onReady.mock.calls).toEqual([['failed'], []]);
         expect(onCompletionEvent).toHaveBeenCalledOnce();

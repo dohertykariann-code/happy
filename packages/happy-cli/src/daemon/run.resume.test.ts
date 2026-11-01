@@ -274,7 +274,7 @@ describe('daemon resume fallback', () => {
     mocks.access.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseAccess = resolve; }));
     const resume = mocks.handlers.resumeSession('old-session', { fallback });
     await vi.waitFor(() => expect(releaseAccess).toBeTypeOf('function'));
-    expect(mocks.handlers.stopSession('old-session')).toBe(true);
+    expect(mocks.handlers.stopSession('old-session')).toMatchObject({ success: true });
     releaseAccess();
     expect(await resume).toMatchObject({ type: 'error' });
     expect(mocks.spawn.mock.calls.length).toBe(0);
@@ -289,7 +289,7 @@ describe('daemon resume fallback', () => {
       return child;
     });
     await mocks.handlers.resumeSession('old-session', { fallback });
-    expect(mocks.handlers.stopSession('old-session')).toBe(true);
+    expect(mocks.handlers.stopSession('old-session')).toMatchObject({ success: true });
     expect(mocks.children()).toHaveLength(1);
     expect(await mocks.handlers.resumeSession('old-session', { fallback })).toMatchObject({ type: 'error', errorMessage: expect.stringContaining('stopping') });
     expect(mocks.spawn.mock.calls.length).toBe(1);
@@ -365,7 +365,7 @@ describe('daemon resume fallback', () => {
     try {
       expect(await mocks.handlers.spawnSession({ directory: '/project', agent: 'codex' })).toMatchObject({ type: 'success' });
       const stopping = once(owners[0], 'message');
-      expect(mocks.handlers.stopSession('old-session')).toBe(true);
+      expect(mocks.handlers.stopSession('old-session')).toMatchObject({ success: true });
       await stopping;
       expect(realKill(owners[0].pid!, 0)).toBe(true);
       const result = await mocks.handlers.resumeSession('old-session', { fallback: { ...fallback, metadata: codexMetadata } });
@@ -425,7 +425,7 @@ describe('daemon resume fallback', () => {
       expect(owners).toHaveLength(1);
 
       const stopping = once(owners[0], 'message');
-      expect(mocks.handlers.stopSession('old-session')).toBe(true);
+      expect(mocks.handlers.stopSession('old-session')).toMatchObject({ success: true });
       await stopping;
       expect(realKill(owners[0].pid!, 0)).toBe(true);
       expect(await mocks.handlers.resumeSession('old-session', { fallback })).toMatchObject({ type: 'error', errorMessage: expect.stringContaining('stopping') });
