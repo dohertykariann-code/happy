@@ -59,7 +59,7 @@ vi.mock('@/utils/thumbhash', () => ({
     generateThumbhash: mocks.generateThumbhash,
 }));
 
-import { MAX_FILE_SIZE, normalizePickedAssetForUpload, readImageDataUri, useImagePicker } from './useImagePicker';
+import { MAX_FILE_SIZE, isPermissionAccepted, normalizePickedAssetForUpload, readImageDataUri, useImagePicker } from './useImagePicker';
 import type { AttachmentPreview } from './useImagePicker';
 
 const photo = {
@@ -398,6 +398,24 @@ describe('useImagePicker pasting', () => {
             expect(mocks.hasImageAsync).not.toHaveBeenCalled();
             expect(mocks.writeAsStringAsync).not.toHaveBeenCalled();
             expect(mocks.setSelectedImages).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('isPermissionAccepted', () => {
+        it('accepts granted', () => {
+            expect(isPermissionAccepted('granted')).toBe(true);
+        });
+
+        it('accepts limited -- iOS 14+ PHPickerViewController still works', () => {
+            expect(isPermissionAccepted('limited')).toBe(true);
+        });
+
+        it('rejects denied', () => {
+            expect(isPermissionAccepted('denied')).toBe(false);
+        });
+
+        it('rejects undetermined', () => {
+            expect(isPermissionAccepted('undetermined')).toBe(false);
         });
     });
 });
