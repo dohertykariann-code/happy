@@ -122,8 +122,8 @@ function isAppServerAvailable(): boolean {
         return false;
     }
     const { major, minor } = version;
-    // app-server available in recent versions
-    return major > 0 || minor >= 100;
+    // GPT-6.1 Sol, Happy's default Codex model, requires Codex 0.153.0+.
+    return major > 0 || minor >= 153;
 }
 
 function isGoalActionsAvailable(): boolean {
@@ -599,8 +599,8 @@ export class CodexAppServerClient {
 
         if (!isAppServerAvailable()) {
             throw new Error(
-                'Codex CLI is not installed\n\n' +
-                'Please install Codex CLI using one of these methods:\n\n' +
+                'Codex CLI 0.153.0 or newer is required\n\n' +
+                'Please install or update Codex CLI using one of these methods:\n\n' +
                 'Option 1 - npm (recommended):\n  npm install -g @openai/codex\n\n' +
                 'Option 2 - Homebrew (macOS):\n  brew install --cask codex\n\n' +
                 'Alternatively, use Claude Code:\n  happy claude',
@@ -1151,9 +1151,6 @@ export class CodexAppServerClient {
         }
     }
 
-    /** Default timeout for waiting on turn completion (ms). 10 minutes. */
-    private static readonly TURN_TIMEOUT_MS = 10 * 60 * 1000;
-
     /**
      * Send a user turn and wait for it to complete (task_complete or turn_aborted).
      * Returns { aborted: true } if the turn was aborted (user cancel, permission reject, etc.).
@@ -1165,7 +1162,6 @@ export class CodexAppServerClient {
         sandbox?: SandboxMode;
         effort?: ReasoningEffort;
         extraInputItems?: InputItem[];
-        turnTimeoutMs?: number;
     }): Promise<{ aborted: boolean }> {
         // Wait for any in-flight interruptTurn() to complete before starting a new
         // turn. Otherwise the stale turn/interrupt RPC can reach Codex after our
@@ -1178,33 +1174,21 @@ export class CodexAppServerClient {
             await new Promise(resolve => setTimeout(resolve, 0));
         }
 
-        const timeoutMs = opts?.turnTimeoutMs ?? CodexAppServerClient.TURN_TIMEOUT_MS;
-        let timer: ReturnType<typeof setTimeout> | null = null;
-
         const completion = new Promise<boolean>((resolve) => {
             this.pendingTurnCompletion = {
                 resolve,
                 turnId: null,
             };
-
-            timer = setTimeout(() => {
-                if (this.pendingTurnCompletion) {
-                    logger.warn(`[CodexAppServer] Turn timed out after ${timeoutMs}ms — treating as abort`);
-                    this.resolvePendingTurn(true);
-                }
-            }, timeoutMs);
         });
 
         try {
             await this.sendTurn(prompt, opts);
         } catch (err) {
-            if (timer) clearTimeout(timer);
             this.pendingTurnCompletion = null;
             throw err;
         }
 
         const aborted = await completion;
-        if (timer) clearTimeout(timer);
         return { aborted };
     }
 

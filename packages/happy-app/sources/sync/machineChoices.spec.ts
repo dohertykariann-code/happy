@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
     collectMachineChoices,
     findMachineChoice,
+    listMachineChoiceAvailableAgents,
     machineChoiceAgentAvailable,
     machineChoiceAgentVisible,
     resolveAgentMachine,
     resolveChoiceAgent,
+    resolveNewSessionAgent,
     resolveWorktreeCreationMachine,
 } from './machineChoices';
 import type { Machine } from './storageTypes';
@@ -137,7 +139,7 @@ describe('what a computer can actually run', () => {
         expect(machineChoiceAgentAvailable(choice, 'rig')).toBe(false);
     });
 
-    it('only shows Antigravity, OpenHands, and Happy Agent when available on the machine', () => {
+    it('lists only harnesses available on the machine', () => {
         const absent = collectMachineChoices([cli()])[0];
         const paired = collectMachineChoices([cli(), rig()])[0];
         const installed = collectMachineChoices([machine('agy-machine', {
@@ -153,6 +155,39 @@ describe('what a computer can actually run', () => {
         expect(machineChoiceAgentVisible(absent, 'claude')).toBe(true);
         expect(machineChoiceAgentVisible(absent, 'rig')).toBe(false);
         expect(machineChoiceAgentVisible(paired, 'rig')).toBe(true);
+        expect(listMachineChoiceAvailableAgents(absent)).toEqual(['claude', 'codex']);
+        expect(listMachineChoiceAvailableAgents(installed)).toEqual(['claude', 'agy', 'openhands_local', 'openhands_deepinfra']);
+        expect(listMachineChoiceAvailableAgents(paired)).toEqual(['claude', 'codex', 'rig']);
+    });
+
+    it('omits Codex when its CLI is not installed', () => {
+        const choice = collectMachineChoices([machine('no-codex', {
+            host: 'laptop.local',
+            cliAvailability: {
+                claude: true,
+                codex: false,
+                agy: false,
+                gemini: false,
+                openclaw: false,
+            },
+        })])[0];
+
+        expect(listMachineChoiceAvailableAgents(choice)).toEqual(['claude']);
+    });
+
+    it('returns an empty list when no harness is set up', () => {
+        const choice = collectMachineChoices([machine('no-harnesses', {
+            host: 'laptop.local',
+            cliAvailability: {
+                claude: false,
+                codex: false,
+                agy: false,
+                gemini: false,
+                openclaw: false,
+            },
+        })])[0];
+
+        expect(listMachineChoiceAvailableAgents(choice)).toEqual([]);
     });
 
     it('keeps a stale draft from starting an agent this computer cannot run', () => {
@@ -219,5 +254,51 @@ describe('a computer that is asleep', () => {
     it('still offers Happy Agent, which the send path refuses later with a reason', () => {
         expect(machineChoiceAgentAvailable(offline, 'rig')).toBe(true);
         expect(resolveAgentMachine(offline, 'rig')?.id).toBe(RIG);
+    });
+});
+
+describe('the harness a new session starts with', () => {
+    it('is Happy on a computer with Happy Agent when nothing was picked, even when the draft still says Claude Code', () => {
+        const paired = collectMachineChoices([cli(), rig()])[0];
+        expect(resolveNewSessionAgent(paired, 'claude', null)).toBe('rig');
+        expect(resolveNewSessionAgent(paired, 'codex', null)).toBe('rig');
+    });
+
+    it('is Happy while Happy Agent is offline too', () => {
+        const asleep = collectMachineChoices([cli(), rig(RIG, CLI, { active: false })])[0];
+        expect(resolveNewSessionAgent(asleep, 'claude', null)).toBe('rig');
+    });
+
+    it('is whatever the person last picked, whatever the draft currently holds', () => {
+        const paired = collectMachineChoices([cli(), rig()])[0];
+        expect(resolveNewSessionAgent(paired, 'rig', 'claude')).toBe('claude');
+        expect(resolveNewSessionAgent(paired, 'claude', 'codex')).toBe('codex');
+        expect(resolveNewSessionAgent(paired, 'claude', 'rig')).toBe('rig');
+    });
+
+    it('passes over a pick this computer cannot run, and returns to it on one that can', () => {
+        const paired = collectMachineChoices([cli(), rig()])[0];
+        const claudeOnly = collectMachineChoices([machine('claude-only', {
+            host: 'desktop.local',
+            cliAvailability: { claude: true, codex: false, gemini: false, openclaw: false },
+        })])[0];
+        const rigOnly = collectMachineChoices([rig('rig-alone', 'nobody')])[0];
+
+        // The draft's agentType follows the fallback; the pick stays codex throughout.
+        expect(resolveNewSessionAgent(claudeOnly, 'codex', 'codex')).toBe('claude');
+        expect(resolveNewSessionAgent(claudeOnly, 'claude', 'codex')).toBe('claude');
+        expect(resolveNewSessionAgent(rigOnly, 'codex', 'codex')).toBe('rig');
+        expect(resolveNewSessionAgent(paired, 'claude', 'codex')).toBe('codex');
+        expect(resolveNewSessionAgent(paired, 'rig', 'codex')).toBe('codex');
+    });
+
+    it('is unchanged on a computer without Happy Agent', () => {
+        const alone = collectMachineChoices([cli()])[0];
+        expect(resolveNewSessionAgent(alone, 'claude', null)).toBe('claude');
+        expect(resolveNewSessionAgent(alone, 'codex', null)).toBe('codex');
+        expect(resolveNewSessionAgent(alone, 'rig', null)).toBe(resolveChoiceAgent(alone, 'rig'));
+        expect(resolveNewSessionAgent(alone, 'claude', 'codex')).toBe('codex');
+        expect(resolveNewSessionAgent(null, 'claude', null)).toBe('claude');
+        expect(resolveNewSessionAgent(null, 'claude', 'codex')).toBe('codex');
     });
 });

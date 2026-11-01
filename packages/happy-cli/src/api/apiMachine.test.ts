@@ -89,7 +89,9 @@ vi.mock('@/resume/localHappyAgentAuth', () => ({
 }));
 
 vi.mock('@/utils/lidState', () => ({
-    shouldReconnect: mockShouldReconnect
+    shouldReconnect: mockShouldReconnect,
+    retainReconnectCapabilityMonitor: vi.fn(),
+    releaseReconnectCapabilityMonitor: vi.fn()
 }));
 
 type SocketHandler = (...args: any[]) => void;
@@ -177,6 +179,23 @@ describe('ApiMachineClient socket reconnection', () => {
         client.shutdown();
     });
 
+    it('rechecks reconnect eligibility before the delayed retry fires', async () => {
+        vi.useFakeTimers();
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        client.connect();
+
+        mockShouldReconnect.mockReset();
+        mockShouldReconnect.mockReturnValueOnce(true).mockReturnValue(false);
+        emitSocketEvent('connect_error', new Error('ECONNREFUSED'));
+
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(mockSocket.connect).not.toHaveBeenCalled();
+
+        client.shutdown();
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(mockSocket.connect).not.toHaveBeenCalled();
+    });
+
     it('emits machine-alive immediately when the socket connects', async () => {
         vi.useFakeTimers();
         mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
@@ -203,6 +222,45 @@ describe('ApiMachineClient socket reconnection', () => {
         aliveCalls = mockSocket.emit.mock.calls.filter(([event]: [string]) => event === 'machine-alive');
         expect(aliveCalls).toHaveLength(2);
 
+        client.shutdown();
+    });
+
+    it('reports readiness only after both spawn and resume are acknowledged, and resets on disconnect', () => {
+        vi.useFakeTimers();
+        mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        client.setRPCHandlers({ spawnSession: vi.fn(), resumeSession: vi.fn(), stopSession: vi.fn(), requestShutdown: vi.fn() });
+        client.connect();
+        expect(client.isReady()).toBe(false);
+        mockSocket.connected = true;
+        emitSocketEvent('connect');
+        emitSocketEvent('rpc-registered', { method: 'other:spawn-happy-session' });
+        expect(client.isReady()).toBe(false);
+        emitSocketEvent('rpc-registered', { method: 'test-machine-id:spawn-happy-session' });
+        expect(client.isReady()).toBe(false);
+        emitSocketEvent('rpc-registered', { method: 'test-machine-id:resume-happy-session' });
+        expect(client.isReady()).toBe(true);
+        emitSocketEvent('rpc-unregistered', { method: 'test-machine-id:resume-happy-session' });
+        expect(client.isReady()).toBe(false);
+        emitSocketEvent('rpc-registered', { method: 'test-machine-id:resume-happy-session' });
+        emitSocketEvent('disconnect', 'transport close');
+        expect(client.isReady()).toBe(false);
+        emitSocketEvent('connect');
+        expect(client.isReady()).toBe(false);
+        client.shutdown();
+    });
+
+    it('does not require a resume acknowledgment when no resume handler exists', () => {
+        vi.useFakeTimers();
+        mockSocket.emitWithAck.mockImplementation(() => new Promise(() => {}));
+        const client = new ApiMachineClient('fake-token', makeMachine());
+        client.setRPCHandlers({ spawnSession: vi.fn(), stopSession: vi.fn(), requestShutdown: vi.fn() });
+        client.connect();
+        mockSocket.connected = true;
+        emitSocketEvent('connect');
+        emitSocketEvent('rpc-registered', null);
+        emitSocketEvent('rpc-registered', { method: 'test-machine-id:spawn-happy-session' });
+        expect(client.isReady()).toBe(true);
         client.shutdown();
     });
 

@@ -20,6 +20,7 @@ type DaemonControlServerOptions = {
   requestShutdown: () => void;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata, encryption?: SessionEncryptionData) => void;
   controlToken: string;
+  getConnectionStatus?: () => { machineId: string; cliVersion: string; serverUrl: string; connected: boolean };
 };
 
 export function startDaemonControlServer(options: DaemonControlServerOptions): Promise<{ port: number; stop: () => Promise<void> }> {
@@ -53,6 +54,7 @@ export function createDaemonControlServer({
   requestShutdown,
   onHappySessionWebhook,
   controlToken,
+  getConnectionStatus,
 }: DaemonControlServerOptions): FastifyInstance {
   const app = fastify({
     logger: false // We use our own logger
@@ -62,6 +64,8 @@ export function createDaemonControlServer({
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const typed = app.withTypeProvider<ZodTypeProvider>();
+
+  typed.post('/status', async () => getConnectionStatus?.() ?? { machineId: null, connected: false });
 
   app.addHook('onRequest', (request, reply, done) => {
     const providedToken = extractBearerToken(request.headers.authorization);

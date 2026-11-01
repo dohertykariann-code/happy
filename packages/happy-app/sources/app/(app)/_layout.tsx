@@ -57,7 +57,12 @@ export default function RootLayout() {
                 name="index"
                 options={{
                     headerShown: false,
-                    headerTitle: ''
+                    headerTitle: '',
+                    // Home hosts the first-run screens, which have nowhere to
+                    // go back to. Android's back button is held by the link
+                    // screen itself.
+                    gestureEnabled: false,
+                    fullScreenGestureEnabled: false,
                 }}
             />
             <Stack.Screen
@@ -91,6 +96,11 @@ export default function RootLayout() {
                 name="session/[id]/message/[messageId]"
                 options={{
                     headerShown: true,
+                    // Use the shared plain title from the first frame, even
+                    // before the message has loaded. Never swap UIKit chrome
+                    // for a differently measured tool header after hydration.
+                    header: createPlainHeader,
+                    headerTitleAlign: 'center',
                     headerBackTitle: t('common.back'),
                     headerTitle: t('common.message')
                 }}
@@ -141,7 +151,9 @@ export default function RootLayout() {
                 name="session/[id]/changes"
                 options={{
                     headerShown: true,
+                    header: createPlainHeader,
                     headerTitle: t('sessionInfo.viewChanges'),
+                    headerTitleAlign: 'center',
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -176,10 +188,29 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="onboarding/settings"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('onboarding.settingsTitle'),
+                    headerTitleAlign: 'center',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="troubleshoot"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('troubleshoot.title'),
+                    headerTitleAlign: 'center',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="restore/index"
                 options={{
                     headerShown: true,
-                    headerTitle: t('navigation.linkNewDevice'),
+                    headerTitle: t('onboarding.restoreTitle'),
+                    headerTitleAlign: 'center',
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -187,7 +218,8 @@ export default function RootLayout() {
                 name="restore/manual"
                 options={{
                     headerShown: true,
-                    headerTitle: t('navigation.restoreWithSecretKey'),
+                    headerTitle: t('onboarding.secretKeyTitle'),
+                    headerTitleAlign: 'center',
                     headerBackTitle: t('common.back'),
                 }}
             />
@@ -362,6 +394,12 @@ export default function RootLayout() {
                 name="dev/rig-preview"
                 options={{
                     headerTitle: 'Rig Preview',
+                }}
+            />
+            <Stack.Screen
+                name="dev/project-home"
+                options={{
+                    headerTitle: 'Project Home',
                 }}
             />
             <Stack.Screen

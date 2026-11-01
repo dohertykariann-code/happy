@@ -2,13 +2,13 @@ import * as React from 'react';
 import {
     View,
     ActivityIndicator,
-    Text,
     Pressable,
     Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useFriendRequests, useSocketStatus, useRealtimeStatus, useSettingMutable } from '@/sync/storage';
+import { useFriendRequests, useRealtimeStatus, useSettingMutable } from '@/sync/storage';
+import { SESSION_LIST_GROUPING_MODES, type SessionListGrouping } from '@/sync/settings';
 import { NativeSettingsMenu, type NativeSettingsMenuGroup } from './NativeSettingsMenu';
 import { useVisibleSessionListViewData } from '@/hooks/useVisibleSessionListViewData';
 import { useIsTablet } from '@/utils/responsive';
@@ -23,16 +23,14 @@ import { SessionsListWrapper } from './SessionsListWrapper';
 import { Header } from './navigation/Header';
 import { HeaderLogo } from './HeaderLogo';
 import { VoiceAssistantStatusBar } from './VoiceAssistantStatusBar';
-import { StatusDot } from './StatusDot';
 import { Ionicons } from '@expo/vector-icons';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { isUsingCustomServer } from '@/sync/serverConfig';
 import { trackFriendsSearch } from '@/track';
 import { MOBILE_GLASS_HEADER_HEIGHT } from './navigation/headerMetrics';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
 import { useStartSessionFromDraft } from '@/hooks/useStartSessionFromDraft';
-import { shouldShowHomeConnectionStatus } from './homeConnectionStatus';
+import { HomeHeaderTitle } from './HomeHeaderTitle';
 
 interface MainViewProps {
     variant: 'phone' | 'sidebar';
@@ -109,28 +107,6 @@ const styles = StyleSheet.create((theme) => ({
         flexBasis: 0,
         flexGrow: 1,
     },
-    titleContainer: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: Platform.OS === 'web' ? 'flex-start' : 'center',
-    },
-    titleText: {
-        fontSize: Platform.OS === 'web' ? 17 : 16,
-        color: theme.colors.header.tint,
-        fontWeight: '600',
-        ...Typography.default('semiBold'),
-    },
-    statusContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: -2,
-    },
-    statusText: {
-        fontSize: Platform.OS === 'web' ? 12 : 11,
-        fontWeight: '500',
-        lineHeight: 16,
-        ...Typography.default(),
-    },
     headerButton: {
         width: 32,
         height: 32,
@@ -168,69 +144,6 @@ const TAB_TITLES = {
 // Active tabs
 type ActiveTabType = TabType;
 
-// Header title component with connection status
-const HeaderTitle = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => {
-    const { theme } = useUnistyles();
-    const socketStatus = useSocketStatus();
-
-    const connectionStatus = React.useMemo(() => {
-        const { status } = socketStatus;
-        switch (status) {
-            case 'connected':
-                return {
-                    color: theme.colors.status.connected,
-                    isPulsing: false,
-                    text: t('status.connected'),
-                };
-            case 'connecting':
-                return {
-                    color: theme.colors.status.connecting,
-                    isPulsing: true,
-                    text: t('status.connecting'),
-                };
-            case 'disconnected':
-                return {
-                    color: theme.colors.status.disconnected,
-                    isPulsing: false,
-                    text: t('status.disconnected'),
-                };
-            case 'error':
-                return {
-                    color: theme.colors.status.error,
-                    isPulsing: false,
-                    text: t('status.error'),
-                };
-            default:
-                return {
-                    color: theme.colors.status.default,
-                    isPulsing: false,
-                    text: '',
-                };
-        }
-    }, [socketStatus, theme]);
-
-    return (
-        <View style={styles.titleContainer}>
-            <Text style={styles.titleText}>
-                {t(TAB_TITLES[activeTab])}
-            </Text>
-            {shouldShowHomeConnectionStatus(socketStatus.status) && connectionStatus.text && (
-                <View style={styles.statusContainer}>
-                    <StatusDot
-                        color={connectionStatus.color}
-                        isPulsing={connectionStatus.isPulsing}
-                        size={6}
-                        style={{ marginRight: 4 }}
-                    />
-                    <Text style={[styles.statusText, { color: connectionStatus.color }]}>
-                        {connectionStatus.text}
-                    </Text>
-                </View>
-            )}
-        </View>
-    );
-});
-
 // Header right button - varies by tab
 const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => {
     const router = useRouter();
@@ -250,8 +163,12 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                         { key: 'flat', label: t('sessionsFilter.flatList') },
                         { key: 'project', label: t('sessionsFilter.groupByProject') },
                     ],
-                    selectedKey: sessionListGrouping === 'project' ? 'project' : 'flat',
-                    onSelect: (key) => setSessionListGrouping(key === 'project' ? 'project' : 'flat'),
+                    selectedKey: sessionListGrouping,
+                    onSelect: (key) => {
+                        if ((SESSION_LIST_GROUPING_MODES as readonly string[]).includes(key)) {
+                            setSessionListGrouping(key as SessionListGrouping);
+                        }
+                    },
                 },
                 // A plain row, not a choice: it leaves this screen for the
                 // appearance settings, where the avatar options now live.
@@ -368,12 +285,19 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
         : MOBILE_HOME_DOCK_CONTENT_INSET;
 
     const handleHomePromptSubmit = React.useCallback(async (): Promise<boolean> => {
+        const draft = useNewSessionDraft.getState();
+        // A bot is made from its name, not from a prompt: the composer's text
+        // is the name, and the prompt typed for a session is left as it was.
+        if (draft.createsBot) {
+            if (!draft.botName.trim()) return false;
+            return await startHomeSession();
+        }
         const prompt = homePrompt.trim();
-        const attachments = useNewSessionDraft.getState().attachments;
+        const attachments = draft.attachments;
         if (!prompt && attachments.length === 0) {
             return false;
         }
-        useNewSessionDraft.getState().setInput(prompt);
+        draft.setInput(prompt);
         // The keyboard stays up: the dock reports what is happening above the
         // composer and closes itself once the session is open.
         const started = await startHomeSession();
@@ -444,7 +368,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const phoneHeader = (
         <View style={[styles.phoneHeader, Platform.OS !== 'web' && styles.phoneHeaderOverlay]}>
             <Header
-                title={<HeaderTitle activeTab={activeTab} />}
+                title={<HomeHeaderTitle title={t(TAB_TITLES[activeTab])} />}
                 headerRight={showHeaderRight ? () => (
                     <HeaderRight activeTab={activeTab} />
                 ) : undefined}
