@@ -256,7 +256,7 @@ export async function startDaemon(): Promise<void> {
       // deciding anything. A liveness probe alone passes for a reused PID, and a
       // stale claim left in the map would wrongly reject a genuine new session
       // that the OS happened to give the same PID.
-      const releasedPids = pruneUnownedClaims(pidToTrackedSession, getProcessLiveness);
+      const releasedPids = pruneUnownedClaims(pidToTrackedSession, getProcessLiveness, undefined, pid);
       if (releasedPids.length > 0) {
         logger.debug(`[DAEMON RUN] Released ${releasedPids.length} claim(s) whose owner no longer holds the PID: ${releasedPids.join(', ')}`);
       }
@@ -744,6 +744,11 @@ export async function startDaemon(): Promise<void> {
         directoryCreated,
         message,
         ...reconnect,
+        // Measured at spawn time, from the process we just created ourselves,
+        // so a webhook arriving before registration completes can verify this
+        // claim by identity (start time) instead of falling back to a raw
+        // liveness probe on a PID we already know is alive.
+        owner: describeProcessOwner(happyProcess.pid),
       };
 
       pidToTrackedSession.set(happyProcess.pid, trackedSession);
@@ -876,16 +881,19 @@ export async function startDaemon(): Promise<void> {
           // stopSession, so trusting liveness here made the session unresumable
           // until the next daemon restart.
           const ownership = verifyClaimOwnership(tracked, getProcessLiveness);
-          const ownerConflict = ownership === 'released'
-            ? undefined
-            : getResumeOwnerConflict(tracked.pid, ownership === 'owned' ? 'alive' : 'unknown');
-          if (ownerConflict) {
+          if (ownership === 'unverifiable') {
+            const ownerConflict = getResumeOwnerConflict(tracked.pid, 'unknown');
             return {
               type: 'error',
               errorMessage: `${ownerConflict}; stop it before resuming.`,
             };
           }
-          pidToTrackedSession.delete(tracked.pid);
+          if (ownership === 'released') {
+            pidToTrackedSession.delete(tracked.pid);
+          }
+          // ownership === 'owned': a genuinely live, identity-verified owner.
+          // Leave the claim in place and fall through to resumeConflict below,
+          // which reuses this same owner instead of rejecting the resume.
         }
         const conflict = resumeConflict(happySessionId);
         if (conflict) return conflict;

@@ -222,9 +222,15 @@ export function pruneUnownedClaims(
   pidToTrackedSession: Map<number, TrackedSession>,
   processLiveness: (pid: number) => ProcessLiveness,
   readStartTime: StartTimeReader = readProcessStartTime,
+  // The webhook handler passes its own reporting PID here: that claim is
+  // about to be resolved by resolveWebhookSessionClaim right after this call,
+  // so probing it here too would be a redundant liveness check on a process
+  // we just spawned ourselves and already know is alive.
+  excludePid?: number,
 ): number[] {
   const released: number[] = [];
   for (const [pid, session] of [...pidToTrackedSession.entries()]) {
+    if (pid === excludePid) continue;
     if (verifyClaimOwnership(session, processLiveness, readStartTime) === 'released') {
       pidToTrackedSession.delete(pid);
       released.push(pid);
