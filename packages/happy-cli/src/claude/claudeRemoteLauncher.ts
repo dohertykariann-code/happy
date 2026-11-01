@@ -82,6 +82,14 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     let exitReason: 'switch' | 'exit' | null = null;
     let abortController: AbortController | null = null;
     let abortFuture: Future<void> | null = null;
+    // claudeRemote applies claudeEnvVars directly onto process.env (the
+    // daemon's own environment), with nothing to undo it afterward. A
+    // usage-cap failover switches CLAUDE_CONFIG_DIR to the fallback
+    // account; without restoring it in the outer finally below, every
+    // later launch in this daemon process would silently keep running
+    // under the fallback account. Captured before the try block so the
+    // finally can see it regardless of where the try exits.
+    const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
 
     async function abort() {
         if (abortController && !abortController.signal.aborted) {
@@ -477,7 +485,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         failoverTriggered = true;
                         let recap = '';
                         try {
-                            recap = await readClaudeSessionRecap(usageCapFailover.fromConfigDir);
+                            recap = await readClaudeSessionRecap(usageCapFailover.fromConfigDir, session.sessionId);
                         } catch (recapError) {
                             logger.debug('[remote]: usage-cap failover recap failed; continuing without recap', recapError);
                         }
@@ -528,6 +536,14 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             }
         }
     } finally {
+
+        // Restore whatever this invocation's claudeEnvVars changed on the
+        // daemon-global process.env (see originalClaudeConfigDir above).
+        if (originalClaudeConfigDir === undefined) {
+            delete process.env.CLAUDE_CONFIG_DIR;
+        } else {
+            process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
+        }
 
         // Clean up permission handler
         permissionHandler.reset();

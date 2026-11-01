@@ -33,17 +33,26 @@ describe('usage-cap failover', () => {
         expect(isClaudeUsageCapExhausted({ status: 429, message: 'temporarily rate limited' })).toBe(false);
     });
 
-    it('runs the established recap script against the primary config directory', async () => {
+    it('runs the established recap script scoped to the failed session, not the newest transcript', async () => {
         const run = vi.fn().mockResolvedValue({ stdout: 'Latest work\n' });
 
-        await expect(readClaudeSessionRecap('/configs/primary', run)).resolves.toBe('Latest work');
+        await expect(readClaudeSessionRecap('/configs/primary', 'claude-session-id', run)).resolves.toBe('Latest work');
         expect(run).toHaveBeenCalledWith(process.execPath, [
             CLAUDE_SESSION_RECAP_SCRIPT,
             '--config-dir',
             '/configs/primary',
             '--n',
             '10',
+            '--session',
+            'claude-session-id',
         ], { maxBuffer: 1024 * 1024 });
+    });
+
+    it('skips the recap entirely without a session id, rather than risk reading an unrelated session', async () => {
+        const run = vi.fn();
+
+        await expect(readClaudeSessionRecap('/configs/primary', null, run)).resolves.toBe('');
+        expect(run).not.toHaveBeenCalled();
     });
 
     it('builds a fresh-session prompt and removes resume-only arguments', () => {

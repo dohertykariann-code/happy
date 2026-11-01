@@ -15,13 +15,14 @@ vi.mock('@/ui/ink/RemoteModeDisplay', () => ({ RemoteModeDisplay: vi.fn() }));
 vi.mock('@/ui/logger', () => ({ logger: { debug: vi.fn() } }));
 vi.mock('@/ui/messageFormatterInk', () => ({ formatClaudeMessageForInk: vi.fn() }));
 vi.mock('@/utils/terminalStdinCleanup', () => ({ cleanupStdinAfterInk: vi.fn() }));
-vi.mock('node:child_process', () => ({ execSync: () => 'fixture-branch' }));
+vi.mock('node:child_process', () => ({ execSync: () => 'fixture-branch', execFile: vi.fn() }));
 vi.mock('./utils/permissionHandler', () => ({
     PermissionHandler: class {
         reset = vi.fn();
         setOnPermissionRequest = vi.fn();
         getResponseLookup = () => new Map();
         handleToolCall = vi.fn();
+        handleModeChange = vi.fn();
     },
 }));
 
@@ -137,7 +138,7 @@ describe('claudeRemoteLauncher usage-cap failover', () => {
             void session.switch();
         });
         await expect(claudeRemoteLauncher(session as any)).resolves.toBe('switch');
-        expect(mockReadClaudeSessionRecap).toHaveBeenCalledWith('/configs/primary');
+        expect(mockReadClaudeSessionRecap).toHaveBeenCalledWith('/configs/primary', 'primary-session');
         expect(fallbackOptions.sessionId).toBeNull();
         expect(fallbackOptions.claudeEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/configs/fallback' });
         expect(fallbackOptions.claudeArgs).toEqual(['--verbose']);
@@ -150,5 +151,23 @@ describe('claudeRemoteLauncher usage-cap failover', () => {
         await expect(claudeRemoteLauncher(session as any)).resolves.toBe('switch');
         expect(mockReadClaudeSessionRecap).not.toHaveBeenCalled();
         expect(session.clearSessionId).not.toHaveBeenCalled();
+    });
+
+    it('restores process.env.CLAUDE_CONFIG_DIR to its prior state once the launcher returns, instead of leaking it daemon-wide', async () => {
+        const session = createSession('/configs/primary');
+        const hadOriginal = Object.prototype.hasOwnProperty.call(process.env, 'CLAUDE_CONFIG_DIR');
+        const originalValue = process.env.CLAUDE_CONFIG_DIR;
+        delete process.env.CLAUDE_CONFIG_DIR;
+        mockClaudeRemote.mockRejectedValueOnce(new Error('Claude usage limit reached')).mockImplementationOnce(async (options) => {
+            await options.nextMessage();
+            options.onSessionFound('fallback-session');
+            void session.switch();
+        });
+        try {
+            await expect(claudeRemoteLauncher(session as any)).resolves.toBe('switch');
+            expect(Object.prototype.hasOwnProperty.call(process.env, 'CLAUDE_CONFIG_DIR')).toBe(false);
+        } finally {
+            if (hadOriginal) process.env.CLAUDE_CONFIG_DIR = originalValue!;
+        }
     });
 });

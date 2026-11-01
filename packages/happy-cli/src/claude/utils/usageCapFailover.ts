@@ -48,14 +48,25 @@ function errorMessage(error: unknown): string {
 
 export async function readClaudeSessionRecap(
     configDir: string,
+    sessionId: string | null | undefined,
     runCommand: RecapCommand = execFileAsync,
 ): Promise<string> {
+    // Without a session id the script falls back to the most recently
+    // modified transcript in the whole config directory, which can belong
+    // to a different concurrent or recent session. That would forward an
+    // unrelated session's turns to the fallback account, so skip the recap
+    // entirely rather than risk reading the wrong one.
+    if (!sessionId) {
+        return '';
+    }
     const { stdout } = await runCommand(process.execPath, [
         CLAUDE_SESSION_RECAP_SCRIPT,
         '--config-dir',
         configDir,
         '--n',
         '10',
+        '--session',
+        sessionId,
     ], { maxBuffer: 1024 * 1024 });
     return stdout.trim();
 }
