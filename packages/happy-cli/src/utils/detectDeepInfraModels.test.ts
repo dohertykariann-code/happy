@@ -17,6 +17,7 @@ describe('DeepInfra model detection', () => {
 
     await expect(detector.detect()).resolves.toEqual([
       { id: 'openai/deepseek-ai/DeepSeek-V4-Flash', displayName: 'DeepSeek V4 Flash' },
+      { id: 'deepinfra/moonshotai/Kimi-K2.6', displayName: 'Kimi K2.6 (vision)' },
       { id: 'openai/zai-org/GLM-5.2', displayName: 'GLM-5.2' },
       { id: 'openai/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo', displayName: 'Qwen3-Coder Turbo' },
     ]);
@@ -35,6 +36,7 @@ describe('DeepInfra model detection', () => {
 
     await expect(detector.detect()).resolves.toEqual([
       { id: 'openai/deepseek-ai/DeepSeek-V4-Flash', displayName: 'DeepSeek V4 Flash' },
+      { id: 'deepinfra/moonshotai/Kimi-K2.6', displayName: 'Kimi K2.6 (vision)' },
       { id: 'openai/zai-org/GLM-5.2', displayName: 'GLM-5.2' },
       { id: 'openai/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo', displayName: 'Qwen3-Coder Turbo' },
     ]);
@@ -63,7 +65,7 @@ describe('DeepInfra model detection', () => {
     const second = detector.detect();
 
     expect(second).toBe(first);
-    await expect(first).resolves.toHaveLength(3);
+    await expect(first).resolves.toHaveLength(4);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
@@ -80,12 +82,12 @@ describe('DeepInfra model detection', () => {
     await expect(detector.detect()).resolves.toBeUndefined();
     expect(fetchFn).toHaveBeenCalledTimes(1);
 
-    await expect(detector.detect()).resolves.toHaveLength(3);
+    await expect(detector.detect()).resolves.toHaveLength(4);
     expect(fetchFn).toHaveBeenCalledTimes(2);
 
     // A success, once cached, still behaves like the "daemon lifetime" test
     // above: a further call does not hit the network again.
-    await expect(detector.detect()).resolves.toHaveLength(3);
+    await expect(detector.detect()).resolves.toHaveLength(4);
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
