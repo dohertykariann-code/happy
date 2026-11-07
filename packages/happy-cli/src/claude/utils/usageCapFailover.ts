@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { USAGE_LIMIT_ERROR_PREFIXES } from '@anthropic-ai/claude-agent-sdk';
 
 export const CLAUDE_SESSION_RECAP_SCRIPT = '/Users/karidoherty/.claude/c-suite/scripts/claude-session-recap.mjs';
 
@@ -30,9 +31,10 @@ export function getUsageCapFailoverConfig(
 
 export function isClaudeUsageCapExhausted(error: unknown): boolean {
     const message = errorMessage(error);
-    return /\b(?:usage|plan|account)\s+(?:limit|cap|quota)\s+(?:has\s+been\s+)?(?:reached|exceeded|exhausted)\b/i.test(message)
-        || /\b(?:limit|cap|quota)\s+(?:has\s+been\s+)?(?:reached|exceeded|exhausted)\b.*\b(?:usage|plan|account)\b/i.test(message)
-        || /\b(?:usage|plan)\s+(?:is\s+)?exhausted\b/i.test(message);
+    if (!message) {
+        return false;
+    }
+    return USAGE_LIMIT_ERROR_PREFIXES.some(prefix => message.startsWith(prefix));
 }
 
 function errorMessage(error: unknown): string {
