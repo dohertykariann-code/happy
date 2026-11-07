@@ -1,3 +1,4 @@
+import { USAGE_LIMIT_ERROR_PREFIXES } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import {
     CLAUDE_SESSION_RECAP_SCRIPT,
@@ -27,10 +28,13 @@ describe('usage-cap failover', () => {
     });
 
     it('recognizes only clear usage-cap exhaustion messages', () => {
-        expect(isClaudeUsageCapExhausted(new Error('Claude usage limit reached'))).toBe(true);
-        expect(isClaudeUsageCapExhausted({ message: 'Your plan cap has been exhausted' })).toBe(true);
+        expect(isClaudeUsageCapExhausted(new Error(USAGE_LIMIT_ERROR_PREFIXES[0] + ' 5-hour limit. Upgrade for more usage.'))).toBe(true);
+        expect(isClaudeUsageCapExhausted(new Error(USAGE_LIMIT_ERROR_PREFIXES[1] + ' weekly limit. Resets Monday.'))).toBe(true);
+        expect(isClaudeUsageCapExhausted({ message: "You're out of usage credits for this billing period." })).toBe(true);
         expect(isClaudeUsageCapExhausted(new Error('socket hang up'))).toBe(false);
         expect(isClaudeUsageCapExhausted({ status: 429, message: 'temporarily rate limited' })).toBe(false);
+        expect(isClaudeUsageCapExhausted(new Error(''))).toBe(false);
+        expect(isClaudeUsageCapExhausted(undefined)).toBe(false);
     });
 
     it('runs the established recap script scoped to the failed session, not the newest transcript', async () => {
