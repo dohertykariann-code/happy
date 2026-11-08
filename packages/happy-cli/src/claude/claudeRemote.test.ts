@@ -34,7 +34,7 @@ describe('claudeRemote', () => {
         message: { role: 'assistant', content: [{ type: 'text', text: expired }] },
     };
 
-    async function runMessages(sdkMessages: unknown[]) {
+    async function runMessages(sdkMessages: unknown[], extra: Record<string, unknown> = {}) {
         vi.mocked(query).mockReturnValue({
             async *[Symbol.asyncIterator]() { yield* sdkMessages; },
         } as any);
@@ -53,9 +53,41 @@ describe('claudeRemote', () => {
             canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
             isAborted: () => false,
             onSessionFound: vi.fn(),
+            ...extra,
         });
         return { onReady, onCompletionEvent, onMessage, nextMessage };
     }
+
+    // Real shape captured from a capped kari@ session (daemon log 2026-11-07):
+    // the SDK reports the cap as a normal result message, never an exception.
+    const capResult = {
+        type: 'result', subtype: 'success', is_error: true, api_error_status: 429,
+        api_error: 'usage_limit_reached',
+        result: "You've hit your session limit · resets 5pm (America/Los_Angeles)",
+    };
+
+    it('rethrows a usage-cap result when failover is armed so the launcher can switch accounts', async () => {
+        await expect(runMessages([capResult], { failoverOnUsageCap: true }))
+            .rejects.toThrow("You've hit your session limit");
+    });
+
+    it('rethrows a usage-cap error-subtype result when failover is armed', async () => {
+        await expect(runMessages([
+            { type: 'result', subtype: 'error_during_execution', is_error: true, errors: ["You've reached your weekly limit"] },
+        ], { failoverOnUsageCap: true })).rejects.toThrow("You've reached your weekly limit");
+    });
+
+    it('leaves a usage-cap result alone when failover is not armed', async () => {
+        const callbacks = await runMessages([capResult]);
+        expect(callbacks.onReady).toHaveBeenCalledOnce();
+    });
+
+    it('does not rethrow an ordinary error result when failover is armed', async () => {
+        const callbacks = await runMessages([
+            { type: 'result', subtype: 'success', is_error: true, result: 'temporarily rate limited' },
+        ], { failoverOnUsageCap: true });
+        expect(callbacks.onReady).toHaveBeenCalledOnce();
+    });
 
     it('explains host OAuth expiry once and closes the turn as failed', async () => {
         const callbacks = await runMessages([
