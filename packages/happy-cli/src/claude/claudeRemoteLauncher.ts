@@ -338,6 +338,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     mcpServers: session.mcpServers,
                     hookSettingsPath: session.hookSettingsPath,
                     jsRuntime: session.jsRuntime,
+                    // Stays armed after the first switch: a cap on the fallback account must
+                    // surface as a failed turn (the catch below only switches once), not as a
+                    // completed one.
+                    failoverOnUsageCap: !!usageCapFailover,
                     canCallTool: permissionHandler.handleToolCall,
                     isAborted: (toolCallId: string) => {
                         return permissionHandler.isAborted(toolCallId);

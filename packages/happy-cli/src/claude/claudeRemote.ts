@@ -32,6 +32,7 @@ function withTitleInstruction(content: MessageParam['content']): MessageParam['c
 }
 import { pluginsFromArgs } from './utils/pluginsFromArgs';
 import { claudeProviderAuthMessage } from './utils/providerAuth';
+import { isClaudeUsageCapExhausted } from './utils/usageCapFailover';
 
 export async function claudeRemote(opts: {
 
@@ -64,7 +65,14 @@ export async function claudeRemote(opts: {
     onSessionReset?: () => void,
     onSDKMetadata?: (metadata: { tools?: string[]; slashCommands?: string[]; mcpServers?: { name: string; status: string }[]; skills?: string[] }) => void,
     /** Per-turn plan rate-limit delta; the launcher merges it into agent state. */
-    onUsageLimits?: (patch: UsageLimitsPatch) => void
+    onUsageLimits?: (patch: UsageLimitsPatch) => void,
+    /**
+     * When true, a usage-cap result (the SDK reports the cap as a normal
+     * is_error result message, not an exception) is rethrown so the launcher's
+     * failover path sees it. Off by default: without a configured fallback
+     * account the turn just ends as before.
+     */
+    failoverOnUsageCap?: boolean
 }) {
 
     // Check if session is valid
@@ -355,6 +363,13 @@ export async function claudeRemote(opts: {
 
             // Handle result messages
             if (message.type === 'result') {
+                if (opts.failoverOnUsageCap && message.is_error) {
+                    const texts = message.subtype === 'success' ? [message.result] : message.errors;
+                    const capText = texts.find(text => isClaudeUsageCapExhausted(new Error(text)));
+                    if (capText !== undefined) {
+                        throw new Error(capText);
+                    }
+                }
                 updateThinking(false);
                 logger.debug('[claudeRemote] Result received');
 

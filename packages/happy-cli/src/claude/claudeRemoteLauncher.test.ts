@@ -130,7 +130,7 @@ describe('claudeRemoteLauncher usage-cap failover', () => {
     it('starts a fresh fallback session with the recap after a matching usage cap', async () => {
         const session = createSession('/configs/primary');
         let fallbackOptions: any;
-        mockClaudeRemote.mockRejectedValueOnce(new Error('Claude usage limit reached')).mockImplementationOnce(async (options) => {
+        mockClaudeRemote.mockRejectedValueOnce(new Error("You've hit your session limit · resets 5pm (America/Los_Angeles)")).mockImplementationOnce(async (options) => {
             fallbackOptions = options;
             const initial = await options.nextMessage();
             expect(initial.message).toContain('Primary recap');
@@ -143,6 +143,46 @@ describe('claudeRemoteLauncher usage-cap failover', () => {
         expect(fallbackOptions.claudeEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/configs/fallback' });
         expect(fallbackOptions.claudeArgs).toEqual(['--verbose']);
         expect(session.clearSessionId).toHaveBeenCalledOnce();
+    });
+
+    it('arms result-message cap detection for every launch, including the fallback', async () => {
+        const session = createSession('/configs/primary');
+        const armed: unknown[] = [];
+        mockClaudeRemote.mockImplementationOnce(async (options) => {
+            armed.push(options.failoverOnUsageCap);
+            throw new Error("You've hit your session limit · resets 5pm (America/Los_Angeles)");
+        }).mockImplementationOnce(async (options) => {
+            armed.push(options.failoverOnUsageCap);
+            void session.switch();
+        });
+        await claudeRemoteLauncher(session as any);
+        expect(armed).toEqual([true, true]);
+    });
+
+    it('does not arm result-message cap detection when no fallback account is configured', async () => {
+        vi.unstubAllEnvs();
+        const session = createSession('/configs/primary');
+        let armed: unknown = 'unset';
+        mockClaudeRemote.mockImplementationOnce(async (options) => {
+            armed = options.failoverOnUsageCap;
+            void session.switch();
+        });
+        await claudeRemoteLauncher(session as any);
+        expect(armed).toBe(false);
+    });
+
+    it('fails the turn, without a second switch, when the fallback account is also capped', async () => {
+        const session = createSession('/configs/primary');
+        const cap = "You've hit your session limit · resets 5pm (America/Los_Angeles)";
+        mockClaudeRemote.mockRejectedValueOnce(new Error(cap)).mockRejectedValueOnce(new Error(cap)).mockImplementationOnce(async () => {
+            // Third launch only happens after the failed turn; end the loop here.
+            void session.switch();
+        });
+        await claudeRemoteLauncher(session as any);
+        expect(mockClaudeRemote).toHaveBeenCalledTimes(3);
+        expect(mockReadClaudeSessionRecap).toHaveBeenCalledOnce();
+        expect(session.clearSessionId).toHaveBeenCalledOnce();
+        expect(session.client.closeClaudeSessionTurn).toHaveBeenCalledWith('failed');
     });
 
     it('does not fail over for an unrelated launcher error', async () => {
@@ -158,7 +198,7 @@ describe('claudeRemoteLauncher usage-cap failover', () => {
         const hadOriginal = Object.prototype.hasOwnProperty.call(process.env, 'CLAUDE_CONFIG_DIR');
         const originalValue = process.env.CLAUDE_CONFIG_DIR;
         delete process.env.CLAUDE_CONFIG_DIR;
-        mockClaudeRemote.mockRejectedValueOnce(new Error('Claude usage limit reached')).mockImplementationOnce(async (options) => {
+        mockClaudeRemote.mockRejectedValueOnce(new Error("You've hit your session limit · resets 5pm (America/Los_Angeles)")).mockImplementationOnce(async (options) => {
             await options.nextMessage();
             options.onSessionFound('fallback-session');
             void session.switch();
