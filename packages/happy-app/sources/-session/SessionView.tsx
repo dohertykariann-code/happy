@@ -8,9 +8,6 @@ import type { MultiTextInputHandle } from '@/components/MultiTextInput';
 import { layout } from '@/components/layout';
 import {
     getEffortLevelsForModel,
-    getRigCurrentModelOptionKey,
-    resolveDefaultModelOption,
-    resolveCurrentOption,
     EffortLevel,
 } from '@/components/modelModeOptions';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
@@ -31,11 +28,9 @@ import { Modal } from '@/modal';
 import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { getCurrentVoiceConversationId, getCurrentVoiceSessionDurationSeconds, startRealtimeSession, stopRealtimeSession } from '@/realtime/RealtimeSession';
 import { sessionAbort, sessionCancelCommunication, sessionGoalAction, sessionSetAgentModes, spawnSideChat, sessionKill, sessionArchive } from '@/sync/ops';
-import { storage, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionProjectAvatar, useSessionUsage, useSetting, useSideChatSessions } from '@/sync/storage';
+import { storage, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionProjectAvatar, useSessionAvatar, useSessionUsage, useSetting, useSideChatSessions, useSession } from '@/sync/storage';
 import { dismissPendingChat, getPendingChat, setPendingChatDraft, submitPendingChat, usePendingChat, type PendingChat } from '@/sync/pendingChats';
 import { claimComposerFocus } from '@/utils/composerFocus';
-import { storage, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionAvatar, useSessionUsage, useSetting, useSideChatSessions } from '@/sync/storage';
-import { useSession } from '@/sync/storage';
 import { getSessionForkSource } from '@/utils/sessionFork';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { HappyError } from '@/utils/errors';
@@ -859,71 +854,9 @@ export function SessionViewLoaded({
     const sessionOrMissing = session ?? MISSING_SESSION;
 
     // Check if CLI version is outdated and not already acknowledged
-    const cliVersion = session.metadata?.version;
-    const machineId = session.metadata?.machineId;
-    const machine = useMachine(machineId ?? '');
-    const isCliOutdated = cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_VERSION);
-    const isAcknowledged = machineId && acknowledgedCliVersions[machineId] === cliVersion;
-    const shouldShowCliWarning = isCliOutdated && !isAcknowledged;
-    const flavor = session.metadata?.flavor;
-    const isRig = isRigMetadata(session.metadata);
-    const agentDefaultOverrides = useSetting('agentDefaultOverrides');
-    const effectiveAgentDefaults = React.useMemo(() => (
-        resolveAgentDefaultConfig(agentDefaultOverrides, flavor, cliVersion)
-    ), [agentDefaultOverrides, cliVersion, flavor]);
-    const availableModels = React.useMemo(() => (
-        getAvailableModels(
-            flavor,
-            session.metadata,
-            t,
-            session.modelMode ?? (isRig ? null : effectiveAgentDefaults.modelMode),
-            machine?.metadata?.claudeModels,
-            machine?.metadata?.codexModels,
-            machine?.metadata?.deepInfraModels,
-        )
-    ), [flavor, session.metadata, session.modelMode, effectiveAgentDefaults.modelMode, isRig, machine?.metadata?.claudeModels, machine?.metadata?.codexModels, machine?.metadata?.deepInfraModels]);
-    const availableModes = React.useMemo(() => (
-        getAvailablePermissionModes(flavor, session.metadata, t, session.permissionMode)
-    ), [flavor, session.metadata, session.permissionMode]);
-
-    const permissionMode = React.useMemo<PermissionMode | null>(() => (
-        resolveCurrentOption(availableModes, [
-            session.permissionMode,
-            ...(isRig ? [
-                session.metadata?.currentOperatingModeCode,
-                session.metadata?.permissionMode,
-                session.metadata?.session?.permissionMode,
-            ] : [
-                effectiveAgentDefaults.permissionMode,
-                session.metadata?.currentOperatingModeCode,
-            ]),
-        ])
-    ), [availableModes, session.permissionMode, effectiveAgentDefaults.permissionMode, session.metadata?.currentOperatingModeCode, session.metadata?.permissionMode, session.metadata?.session?.permissionMode, isRig]);
-
-    const modelMode = React.useMemo<ModelMode | null>(() => (
-        resolveCurrentOption(availableModels, [
-            session.modelMode,
-            isRig ? getRigCurrentModelOptionKey(session.metadata) : resolveDefaultModelOption(availableModels, effectiveAgentDefaults.modelMode)?.key,
-            isRig ? undefined : session.metadata?.currentModelCode,
-        ])
-    ), [availableModels, session.modelMode, effectiveAgentDefaults.modelMode, session.metadata, isRig]);
-
-    // Effort level state
-    const modelKey = modelMode?.key ?? 'default';
-    const availableEffortLevels = React.useMemo<EffortLevel[]>(() => (
-        getEffortLevelsForModel(flavor, modelKey, session.metadata)
-    ), [flavor, modelKey, session.metadata]);
-    const effortLevel = React.useMemo<EffortLevel | null>(() => (
-        resolveCurrentOption(availableEffortLevels, [
-            session.effortLevel,
-            isRig ? getRigReasoningSelection(session.metadata, modelKey) : effectiveAgentDefaults.effortLevel,
-        ])
-    ), [availableEffortLevels, session.effortLevel, effectiveAgentDefaults.effortLevel, session.metadata, modelKey, isRig]);
-
-    const sessionStatus = useSessionStatus(session);
-    const sessionUsage = useSessionUsage(sessionId);
     const cliVersion = session?.metadata?.version;
     const machineId = session?.metadata?.machineId;
+    const machine = useMachine(machineId ?? '');
     const isCliOutdated = cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_VERSION);
     const isAcknowledged = machineId && acknowledgedCliVersions[machineId] === cliVersion;
     const shouldShowCliWarning = isCliOutdated && !isAcknowledged;
@@ -936,7 +869,7 @@ export function SessionViewLoaded({
         modelMode,
         availableEffortLevels,
         effortLevel,
-    } = useComposerModes(composerSession);
+    } = useComposerModes(composerSession, machine);
 
     const sessionStatus = useSessionStatus(sessionOrMissing);
     const sessionUsage = useSessionUsage(sessionId ?? '');

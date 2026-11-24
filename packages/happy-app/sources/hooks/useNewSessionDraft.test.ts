@@ -5,8 +5,7 @@ type Draft = {
     selectedMachineId: string | null;
     selectedPath: string | null;
     agentType: 'claude' | 'codex' | 'gemini' | 'openclaw' | 'agy' | 'rig' | 'openhands_local' | 'openhands_deepinfra';
-    agentType: 'claude' | 'codex' | 'gemini' | 'openclaw' | 'agy' | 'rig';
-    pickedAgentType?: 'claude' | 'codex' | 'gemini' | 'openclaw' | 'agy' | 'rig' | null;
+    pickedAgentType?: 'claude' | 'codex' | 'gemini' | 'openclaw' | 'agy' | 'rig' | 'openhands_local' | 'openhands_deepinfra' | null;
     permissionMode: string | null;
     modelMode: string | null;
     effortLevel: string | null;
