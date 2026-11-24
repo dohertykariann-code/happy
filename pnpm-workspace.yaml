@@ -9,3 +9,26 @@ packages:
   - "packages/happy-mobile-gym"
   - "packages/expo-tailcat"
   - "packages/happy-push-server"
+
+# Moved from the root package.json's "pnpm" key (2026-11-24): pnpm 10 no longer
+# reads "pnpm.overrides"/"pnpm.onlyBuiltDependencies" from package.json, so that
+# block (including the pre-existing whatwg-url/parse-path overrides) had been
+# silently ignored. This is the field's real home now.
+overrides:
+  whatwg-url: "14.2.0"
+  parse-path: "7.0.3"
+  "@types/parse-path": "7.0.3"
+  shell-quote: ">=1.11.0"
+  proxy-addr: ">=2.0.8"
+
+onlyBuiltDependencies:
+  - "@more-tech/react-native-libsodium"
+  - "@prisma/client"
+  - "@prisma/engines"
+  - "@shopify/react-native-skia"
+  - "@tailwindcss/oxide"
+  - "better-sqlite3"
+  - "esbuild"
+  - "prisma"
+  - "sharp"
+  - "workerd"
