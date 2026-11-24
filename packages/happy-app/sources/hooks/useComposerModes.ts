@@ -10,7 +10,7 @@ import {
 import type { ModelMode, PermissionMode } from '@/components/PermissionModeSelector';
 import { resolveAgentDefaultConfig, retireModelMode } from '@/sync/agentDefaults';
 import { getRigReasoningSelection, isRigMetadata } from '@/sync/rig';
-import { useSetting } from '@/sync/storage';
+import { useMachine, useSetting } from '@/sync/storage';
 import type { Session } from '@/sync/storageTypes';
 import { t } from '@/text';
 
@@ -40,6 +40,7 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
     const flavor = metadata?.flavor;
     const cliVersion = metadata?.version;
     const isRig = isRigMetadata(metadata);
+    const machine = useMachine(session?.metadata?.machineId ?? '');
     const agentDefaultOverrides = useSetting('agentDefaultOverrides');
     const effectiveAgentDefaults = React.useMemo(() => (
         resolveAgentDefaultConfig(agentDefaultOverrides, flavor, cliVersion)
@@ -55,8 +56,11 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
             metadata,
             t,
             sessionModelMode ?? (isRig ? null : effectiveAgentDefaults.modelMode),
+            machine?.metadata?.claudeModels,
+            machine?.metadata?.codexModels,
+            machine?.metadata?.deepInfraModels,
         )
-    ), [flavor, metadata, sessionModelMode, effectiveAgentDefaults.modelMode, isRig]);
+    ), [flavor, metadata, sessionModelMode, effectiveAgentDefaults.modelMode, isRig, machine?.metadata?.claudeModels, machine?.metadata?.codexModels, machine?.metadata?.deepInfraModels]);
     const availableModes = React.useMemo(() => (
         getAvailablePermissionModes(flavor, metadata, t, session?.permissionMode)
     ), [flavor, metadata, session?.permissionMode]);
