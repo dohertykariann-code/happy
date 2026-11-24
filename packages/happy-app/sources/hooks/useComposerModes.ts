@@ -4,6 +4,7 @@ import {
     getAvailablePermissionModes,
     getEffortLevelsForModel,
     getRigCurrentModelOptionKey,
+    resolveDefaultModelOption,
     resolveCurrentOption,
     type EffortLevel,
 } from '@/components/modelModeOptions';
@@ -11,7 +12,7 @@ import type { ModelMode, PermissionMode } from '@/components/PermissionModeSelec
 import { resolveAgentDefaultConfig, retireModelMode } from '@/sync/agentDefaults';
 import { getRigReasoningSelection, isRigMetadata } from '@/sync/rig';
 import { useSetting } from '@/sync/storage';
-import type { Session } from '@/sync/storageTypes';
+import type { Machine, Session } from '@/sync/storageTypes';
 import { t } from '@/text';
 
 export interface ComposerModes {
@@ -35,7 +36,7 @@ export interface ComposerModes {
  * A null session is one that does not exist yet: every option falls back to the
  * defaults, which is exactly what a new chat starts with.
  */
-export function useComposerModes(session: Session | null | undefined): ComposerModes {
+export function useComposerModes(session: Session | null | undefined, machine?: Machine | null): ComposerModes {
     const metadata = session?.metadata;
     const flavor = metadata?.flavor;
     const cliVersion = metadata?.version;
@@ -55,8 +56,11 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
             metadata,
             t,
             sessionModelMode ?? (isRig ? null : effectiveAgentDefaults.modelMode),
+            machine?.metadata?.claudeModels,
+            machine?.metadata?.codexModels,
+            machine?.metadata?.deepInfraModels,
         )
-    ), [flavor, metadata, sessionModelMode, effectiveAgentDefaults.modelMode, isRig]);
+    ), [flavor, metadata, sessionModelMode, effectiveAgentDefaults.modelMode, isRig, machine?.metadata?.claudeModels, machine?.metadata?.codexModels, machine?.metadata?.deepInfraModels]);
     const availableModes = React.useMemo(() => (
         getAvailablePermissionModes(flavor, metadata, t, session?.permissionMode)
     ), [flavor, metadata, session?.permissionMode]);
@@ -78,7 +82,7 @@ export function useComposerModes(session: Session | null | undefined): ComposerM
     const modelMode = React.useMemo<ModelMode | null>(() => (
         resolveCurrentOption(availableModels, [
             sessionModelMode,
-            isRig ? getRigCurrentModelOptionKey(metadata) : effectiveAgentDefaults.modelMode,
+            isRig ? getRigCurrentModelOptionKey(metadata) : resolveDefaultModelOption(availableModels, effectiveAgentDefaults.modelMode)?.key,
             isRig ? undefined : metadata?.currentModelCode,
         ])
     ), [availableModels, sessionModelMode, effectiveAgentDefaults.modelMode, metadata, isRig]);
