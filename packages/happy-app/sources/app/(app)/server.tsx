@@ -120,7 +120,7 @@ export default function ServerConfigScreen() {
             
             return true;
         } catch (err) {
-            setError(t('server.failedToConnectToServer'));
+            setError(`${t('server.failedToConnectToServer')} :: ${err instanceof Error ? err.message : String(err)}`);
             return false;
         } finally {
             setIsValidating(false);

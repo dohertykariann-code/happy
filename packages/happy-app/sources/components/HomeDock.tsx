@@ -1,7 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Keyboard, LayoutChangeEvent, Modal as RNModal, Platform, Pressable, ScrollView, Text, TextInput, View, type StyleProp, type ViewStyle } from 'react-native';
-import { ActivityIndicator, Keyboard, LayoutChangeEvent, Modal as RNModal, Platform, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
-import type { StyleProp, ViewStyle } from 'react-native';
+import { ActivityIndicator, Keyboard, LayoutChangeEvent, Modal as RNModal, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -61,7 +59,6 @@ import {
     getSupportsWorktree,
     groupModelModesByProvider,
     includeConfiguredModel,
-    resolveDefaultModelOption,
     truncateModelLabel,
     type ModeOption,
 } from './modelModeOptions';
@@ -583,13 +580,11 @@ function RefusableControl({
     onRefuse,
     style,
     children,
-    style,
 }: {
     refusing: boolean;
     onRefuse: () => void;
     style?: StyleProp<ViewStyle>;
     children: React.ReactNode;
-    style?: StyleProp<ViewStyle>;
 }) {
     const shake = useSharedValue(0);
     const shakeStyle = useAnimatedStyle(() => ({
@@ -979,10 +974,6 @@ export const HomeDock = React.memo(({
         permissionMode,
         defaults.permissionMode,
         rigCreation ? null : getCodeAgentDefaults(agentType, happyCliVersion).permissionMode,
-    ]);
-    const currentModel = resolveOption(modelOptions, [
-        modelMode,
-        resolveDefaultModelOption(modelOptions, defaults.modelMode)?.key,
     ]);
     const currentModel = resolveOption(modelOptions, [retireModelMode(agentType, modelMode), defaults.modelMode]);
     const effortOptions = React.useMemo(
