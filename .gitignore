@@ -55,7 +55,12 @@ CLAUDE.md
 
 # Local dev environments
 .environments/
+environments/
 packages/dev-environments/data/
+
+# Dependency cache and build-artifact backups (never belong in git)
+.pnpm-store/
+**/dist.backup-*/
 
 # Development planning notes (keep local, don't commit)
 notes/
